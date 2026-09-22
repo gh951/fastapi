@@ -1,2 +1,2 @@
 [phases.setup]
-nixPkgs = ["python311", "fluidsynth", "ffmpeg"]
+nixPkgs = ["python311", "fluidsynth", "ffmpeg", "soundfont-fluid"]
