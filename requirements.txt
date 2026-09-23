@@ -2,3 +2,6 @@ fastapi
 hypercorn
 MIDIUtil
 pyfluidsynth
+numpy
+mido
+uvicorn
