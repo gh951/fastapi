@@ -8,3 +8,4 @@ uvicorn
 requests
 librosa
 soundfile
+basic-pitch

@@ -720,7 +720,7 @@ def vvip_status(job_id: str):
         })
 
 
-# ── cgo-371: 보컬 멜로디 추출 (librosa pyin) ──────────────────────────
+# ── cgo-374: 보컬 멜로디 추출 (Spotify Basic Pitch AI) ──────────────────
 _NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 def _midi_to_note_name(midi_num):
@@ -730,65 +730,70 @@ def _midi_to_note_name(midi_num):
     return f"{note}{octave}"
 
 def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
-    """오디오 파일에서 보컬 멜로디 추출 — librosa pyin 기반"""
+    """오디오 파일에서 보컬 멜로디 추출 — Spotify Basic Pitch AI 엔진
+
+    librosa pyin 대비 장점:
+    - AI 학습 모델로 정확도 대폭 향상
+    - 다성음(polyphonic) 감지 가능
+    - Onset(음 시작점) 정밀 감지
+    - melodia_trick으로 주선율(보컬) 자동 추출
+    """
+    from basic_pitch.inference import predict
     import librosa
 
-    # 모노 22050Hz, 최대 300초 (5분 — 일반 곡 전체 커버)
-    y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=max_seconds)
-
-    # 하모닉/퍼커시브 분리 — 드럼 제거
-    y_harmonic, _ = librosa.effects.hpss(y)
-
-    # pyin 피치 감지 (보컬 범위 C3~C6)
-    f0, voiced_flag, voiced_probs = librosa.pyin(
-        y_harmonic,
-        fmin=librosa.note_to_hz('C3'),
-        fmax=librosa.note_to_hz('C6'),
-        sr=sr,
-        frame_length=2048,
-        hop_length=512
+    # Spotify Basic Pitch AI 채보
+    model_output, midi_data, note_events = predict(
+        audio_path,
+        onset_threshold=0.5,
+        frame_threshold=0.3,
+        minimum_note_length=80,                       # 80ms 미만 노이즈 제거
+        minimum_frequency=librosa.note_to_hz('C3'),   # 보컬 하한
+        maximum_frequency=librosa.note_to_hz('C6'),   # 보컬 상한
+        melodia_trick=True,                           # 주선율(보컬) 추출 강화
     )
 
-    times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=512)
-    beat_dur = 60.0 / bpm  # 1박 길이(초)
+    if not note_events:
+        return []
 
-    # 프레임 → 노트 이벤트 변환
+    # note_events: [(start_sec, end_sec, midi_pitch, amplitude, pitch_bends), ...]
+    # max_seconds 제한 + raw_events 변환
     raw_events = []
-    cur_midi = None
-    cur_start = None
+    for evt in note_events:
+        start_sec = evt[0]
+        end_sec = evt[1]
+        midi_pitch = int(evt[2])
+        amplitude = float(evt[3])
 
-    for i in range(len(f0)):
-        if voiced_flag[i] and not np.isnan(f0[i]):
-            midi_note = int(round(librosa.hz_to_midi(f0[i])))
-            midi_note = max(48, min(84, midi_note))  # C3~C6 클램프
+        if start_sec >= max_seconds:
+            break
 
-            if midi_note != cur_midi:
-                if cur_midi is not None and cur_start is not None:
-                    dur_sec = times[i] - cur_start
-                    if dur_sec > 0.05:
-                        raw_events.append({'midi': cur_midi, 'start': cur_start, 'dur': dur_sec})
-                cur_midi = midi_note
-                cur_start = times[i]
-        else:
-            if cur_midi is not None and cur_start is not None:
-                dur_sec = times[i] - cur_start
-                if dur_sec > 0.05:
-                    raw_events.append({'midi': cur_midi, 'start': cur_start, 'dur': dur_sec})
-                cur_midi = None
-                cur_start = None
+        dur_sec = min(end_sec, max_seconds) - start_sec
+        if dur_sec < 0.05:
+            continue
 
-    # 마지막 노트
-    if cur_midi is not None and cur_start is not None:
-        dur_sec = times[-1] - cur_start
-        if dur_sec > 0.05:
-            raw_events.append({'midi': cur_midi, 'start': cur_start, 'dur': dur_sec})
+        raw_events.append({
+            'midi': midi_pitch,
+            'start': start_sec,
+            'dur': dur_sec,
+            'amp': amplitude
+        })
+
+    # 동시 발음 시 가장 강한 음만 남기기 (단선율 멜로디)
+    raw_events.sort(key=lambda e: (e['start'], -e['amp']))
+    melody_line = []
+    last_end = 0.0
+    for evt in raw_events:
+        if evt['start'] >= last_end - 0.02:  # 20ms 허용치
+            melody_line.append(evt)
+            last_end = evt['start'] + evt['dur']
 
     # 16분음표 그리드 양자화 + 순차 이벤트 빌드
+    beat_dur = 60.0 / bpm
     melody_events = []
     prev_end_beats = 0.0
-    prev_end_sec = 0.0  # cgo-372: 실제 시간(초) 추적
+    prev_end_sec = 0.0
 
-    for evt in raw_events:
+    for evt in melody_line:
         start_beats = evt['start'] / beat_dur
         dur_beats = evt['dur'] / beat_dur
 
@@ -805,7 +810,6 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
             prev_end_sec += gap_sec
 
         note_name = _midi_to_note_name(evt['midi'])
-        # cgo-372: start_sec = 실제 오디오 시작 시간 (동기화용)
         melody_events.append({
             'name': note_name,
             'dur': round(dur_beats, 2),
@@ -819,7 +823,7 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
 
 @app.post("/extract_melody")
 async def extract_melody_endpoint(request: Request):
-    """cgo-371: 보컬 멜로디 추출 — 오디오 URL에서 음계 분석 (무료, librosa pyin)"""
+    """cgo-374: 보컬 멜로디 추출 — Spotify Basic Pitch AI 채보 엔진 (무료, 오픈소스)"""
     data = await request.json()
     audio_url = data.get("audio_url")
     bpm = float(data.get("bpm", 120))
