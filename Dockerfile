@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y \
     fluidsynth \
     fluid-soundfont-gm \
     libfluidsynth-dev \
+    ffmpeg \
+    libsndfile1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
