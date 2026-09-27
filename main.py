@@ -950,6 +950,7 @@ class VvipReq(BaseModel):
     bpm: int = 120
     key: str = "C"
     chords: str = ""
+    vocal: str = ""  # cgo-382: male/female/duet/bgm/child/choir
 
 
 @app.post("/vvip_generate")
@@ -965,7 +966,7 @@ def vvip_generate(req: VvipReq):
 
     prompt = req.prompt
 
-    # ── 최소 2명 이상 보컬 조합 검증 (CGO-FULI VVIP 원칙) ──
+    # ── cgo-382: 최소 1명 이상 보컬 검증 (독창 지원 — 기존 2명→1명) ──
     matched_artists = []
     seen_descriptions: set = set()
     for artist, description in VOICE_MAP.items():
@@ -973,11 +974,11 @@ def vvip_generate(req: VvipReq):
             matched_artists.append(artist)
             seen_descriptions.add(description)
 
-    if len(seen_descriptions) < 2:
+    if len(seen_descriptions) < 1:
         return JSONResponse(status_code=400, content={
             "ok": False,
-            "error": "VVIP는 2명 이상의 서로 다른 목소리 조합이 필요합니다.",
-            "hint": "예: 파워디바+감성발라드 등 2개 이상 스타일을 선택하세요",
+            "error": "보컬리스트를 1명 이상 선택해 주세요.",
+            "hint": "보컬 선택에서 장르·성별을 고른 뒤 추첨하거나 카드를 직접 선택하세요",
             "matched": len(seen_descriptions)
         })
 
@@ -987,8 +988,17 @@ def vvip_generate(req: VvipReq):
         if artist in converted_prompt:
             converted_prompt = converted_prompt.replace(artist, description)
 
-    # ── Suno 프롬프트 조합 ──
-    suno_prompt = f"{converted_prompt}, {req.style}, {req.bpm} BPM, key of {req.key}"
+    # ── Suno 프롬프트 조합 (cgo-382: 성별 + 독창/믹스 태그) ──
+    vocal_tag = ""
+    if req.vocal == "male":
+        vocal_tag = "male vocals only, all male singers, "
+    elif req.vocal == "female":
+        vocal_tag = "female vocals only, all female singers, "
+    elif req.vocal == "duet":
+        vocal_tag = "male and female duet, "
+    if len(seen_descriptions) == 1:
+        vocal_tag += "solo vocal, single singer, "
+    suno_prompt = f"{vocal_tag}{converted_prompt}, {req.style}, {req.bpm} BPM, key of {req.key}"
     if req.chords:
         suno_prompt += f", chord progression: {req.chords}"
 
