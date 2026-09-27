@@ -562,7 +562,9 @@ def vvip_generate(req: VvipReq):
     원칙: 최소 2명 이상의 서로 다른 보컬리스트 조합 필수
     """
     if not APIFRAME_KEY:
-        raise HTTPException(500, "API key not configured")
+        return JSONResponse(status_code=500, content={
+            "ok": False, "error": "API key가 설정되지 않았습니다."
+        })
 
     prompt = req.prompt
 
@@ -578,7 +580,7 @@ def vvip_generate(req: VvipReq):
         return JSONResponse(status_code=400, content={
             "ok": False,
             "error": "VVIP는 2명 이상의 서로 다른 목소리 조합이 필요합니다.",
-            "hint": "예: 소향+보니테일러, 김범수+프레디머큐리, 아이유+아델",
+            "hint": "예: 파워디바+감성발라드 등 2개 이상 스타일을 선택하세요",
             "matched": len(seen_descriptions)
         })
 
@@ -609,24 +611,43 @@ def vvip_generate(req: VvipReq):
             },
             timeout=30
         )
-        resp.raise_for_status()
+
+        if not resp.ok:
+            api_err = ""
+            try:
+                api_err = resp.text[:200]
+            except Exception:
+                pass
+            return JSONResponse(status_code=502, content={
+                "ok": False,
+                "error": f"Suno API 호출 실패 (HTTP {resp.status_code})",
+                "hint": api_err or "apiframe.ai 서비스 상태를 확인하세요"
+            })
+
         result = resp.json()
         task_id = result.get('task_id') or result.get('id')
 
         if not task_id:
-            raise HTTPException(502, "No task_id returned from API")
+            return JSONResponse(status_code=502, content={
+                "ok": False,
+                "error": "API에서 task_id를 받지 못했습니다.",
+                "hint": str(result)[:200]
+            })
 
         # ── 완료 대기 폴링 (최대 3분) ──
         audio_url = None
         title = None
         for _ in range(36):
             time.sleep(5)
-            status_resp = http_requests.get(
-                f'https://api.apiframe.ai/suno/status/{task_id}',
-                headers={'Authorization': f'Bearer {APIFRAME_KEY}'},
-                timeout=15
-            )
-            status_data = status_resp.json()
+            try:
+                status_resp = http_requests.get(
+                    f'https://api.apiframe.ai/suno/status/{task_id}',
+                    headers={'Authorization': f'Bearer {APIFRAME_KEY}'},
+                    timeout=15
+                )
+                status_data = status_resp.json()
+            except Exception as poll_err:
+                continue
 
             if status_data.get('status') == 'completed':
                 tracks = status_data.get('tracks', [])
@@ -635,10 +656,17 @@ def vvip_generate(req: VvipReq):
                     title = tracks[0].get('title', 'VVIP Song')
                 break
             elif status_data.get('status') == 'failed':
-                raise HTTPException(502, "Suno generation failed")
+                return JSONResponse(status_code=502, content={
+                    "ok": False,
+                    "error": "Suno 곡 생성이 실패했습니다.",
+                    "hint": status_data.get('error', '다시 시도해 주세요')
+                })
 
         if not audio_url:
-            raise HTTPException(504, "Generation timeout (3 minutes)")
+            return JSONResponse(status_code=504, content={
+                "ok": False,
+                "error": "생성 시간 초과 (3분). 다시 시도해 주세요."
+            })
 
         return JSONResponse(content={
             "ok": True,
@@ -649,7 +677,10 @@ def vvip_generate(req: VvipReq):
         })
 
     except http_requests.exceptions.RequestException as e:
-        raise HTTPException(502, f"API call failed: {str(e)}")
+        return JSONResponse(status_code=502, content={
+            "ok": False,
+            "error": f"API 연결 실패: {str(e)}"
+        })
 
 
 @app.get("/vvip_generate")
