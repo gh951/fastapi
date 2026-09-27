@@ -786,6 +786,7 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
     # 16분음표 그리드 양자화 + 순차 이벤트 빌드
     melody_events = []
     prev_end_beats = 0.0
+    prev_end_sec = 0.0  # cgo-372: 실제 시간(초) 추적
 
     for evt in raw_events:
         start_beats = evt['start'] / beat_dur
@@ -799,11 +800,19 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
         # 이전 노트와 현재 사이 쉼표 삽입
         gap = round(start_beats - prev_end_beats, 2)
         if gap >= 0.25:
-            melody_events.append({'name': None, 'dur': gap})
+            gap_sec = round(gap * beat_dur, 3)
+            melody_events.append({'name': None, 'dur': gap, 'start_sec': round(prev_end_sec, 3)})
+            prev_end_sec += gap_sec
 
         note_name = _midi_to_note_name(evt['midi'])
-        melody_events.append({'name': note_name, 'dur': round(dur_beats, 2)})
+        # cgo-372: start_sec = 실제 오디오 시작 시간 (동기화용)
+        melody_events.append({
+            'name': note_name,
+            'dur': round(dur_beats, 2),
+            'start_sec': round(evt['start'], 3)
+        })
         prev_end_beats = start_beats + dur_beats
+        prev_end_sec = evt['start'] + evt['dur']
 
     return melody_events
 
