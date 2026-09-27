@@ -18,7 +18,7 @@ import wave
 
 import numpy as np
 import requests as http_requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -717,6 +717,139 @@ def vvip_status(job_id: str):
             "ok": True,
             "status": "PROCESSING",
             "job_id": job_id
+        })
+
+
+# ── cgo-371: 보컬 멜로디 추출 (librosa pyin) ──────────────────────────
+_NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+def _midi_to_note_name(midi_num):
+    """MIDI 번호 → 음표명 (60 → 'C4')"""
+    octave = (midi_num // 12) - 1
+    note = _NOTE_NAMES_SHARP[midi_num % 12]
+    return f"{note}{octave}"
+
+def _extract_melody_impl(audio_path, bpm=120, max_seconds=90):
+    """오디오 파일에서 보컬 멜로디 추출 — librosa pyin 기반"""
+    import librosa
+
+    # 모노 22050Hz, 최대 90초
+    y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=max_seconds)
+
+    # 하모닉/퍼커시브 분리 — 드럼 제거
+    y_harmonic, _ = librosa.effects.hpss(y)
+
+    # pyin 피치 감지 (보컬 범위 C3~C6)
+    f0, voiced_flag, voiced_probs = librosa.pyin(
+        y_harmonic,
+        fmin=librosa.note_to_hz('C3'),
+        fmax=librosa.note_to_hz('C6'),
+        sr=sr,
+        frame_length=2048,
+        hop_length=512
+    )
+
+    times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=512)
+    beat_dur = 60.0 / bpm  # 1박 길이(초)
+
+    # 프레임 → 노트 이벤트 변환
+    raw_events = []
+    cur_midi = None
+    cur_start = None
+
+    for i in range(len(f0)):
+        if voiced_flag[i] and not np.isnan(f0[i]):
+            midi_note = int(round(librosa.hz_to_midi(f0[i])))
+            midi_note = max(48, min(84, midi_note))  # C3~C6 클램프
+
+            if midi_note != cur_midi:
+                if cur_midi is not None and cur_start is not None:
+                    dur_sec = times[i] - cur_start
+                    if dur_sec > 0.05:
+                        raw_events.append({'midi': cur_midi, 'start': cur_start, 'dur': dur_sec})
+                cur_midi = midi_note
+                cur_start = times[i]
+        else:
+            if cur_midi is not None and cur_start is not None:
+                dur_sec = times[i] - cur_start
+                if dur_sec > 0.05:
+                    raw_events.append({'midi': cur_midi, 'start': cur_start, 'dur': dur_sec})
+                cur_midi = None
+                cur_start = None
+
+    # 마지막 노트
+    if cur_midi is not None and cur_start is not None:
+        dur_sec = times[-1] - cur_start
+        if dur_sec > 0.05:
+            raw_events.append({'midi': cur_midi, 'start': cur_start, 'dur': dur_sec})
+
+    # 16분음표 그리드 양자화 + 순차 이벤트 빌드
+    melody_events = []
+    prev_end_beats = 0.0
+
+    for evt in raw_events:
+        start_beats = evt['start'] / beat_dur
+        dur_beats = evt['dur'] / beat_dur
+
+        # 16분음표(0.25) 양자화
+        start_beats = round(start_beats * 4) / 4
+        dur_beats = round(dur_beats * 4) / 4
+        dur_beats = max(0.25, min(dur_beats, 4.0))
+
+        # 이전 노트와 현재 사이 쉼표 삽입
+        gap = round(start_beats - prev_end_beats, 2)
+        if gap >= 0.25:
+            melody_events.append({'name': None, 'dur': gap})
+
+        note_name = _midi_to_note_name(evt['midi'])
+        melody_events.append({'name': note_name, 'dur': round(dur_beats, 2)})
+        prev_end_beats = start_beats + dur_beats
+
+    return melody_events
+
+
+@app.post("/extract_melody")
+async def extract_melody_endpoint(request: Request):
+    """cgo-371: 보컬 멜로디 추출 — 오디오 URL에서 음계 분석 (무료, librosa pyin)"""
+    data = await request.json()
+    audio_url = data.get("audio_url")
+    bpm = float(data.get("bpm", 120))
+
+    if not audio_url:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "audio_url 필수"})
+
+    try:
+        # 오디오 다운로드
+        resp = http_requests.get(audio_url, timeout=30)
+        if resp.status_code != 200:
+            return JSONResponse(status_code=502, content={
+                "ok": False, "error": f"오디오 다운로드 실패 (HTTP {resp.status_code})"
+            })
+
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(resp.content)
+            temp_path = f.name
+
+        try:
+            notes = _extract_melody_impl(temp_path, bpm=bpm)
+            note_count = len([n for n in notes if n.get('name')])
+            return JSONResponse(content={
+                "ok": True,
+                "notes": notes,
+                "total_notes": note_count,
+                "bpm": bpm
+            })
+        finally:
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={
+            "ok": False, "error": f"멜로디 추출 실패: {str(e)}"
         })
 
 
