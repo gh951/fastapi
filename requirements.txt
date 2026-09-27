@@ -5,3 +5,4 @@ pyfluidsynth
 numpy
 mido
 uvicorn
+requests
