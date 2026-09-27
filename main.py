@@ -595,27 +595,35 @@ def vvip_generate(req: VvipReq):
     if req.chords:
         suno_prompt += f", chord progression: {req.chords}"
 
-    # ── apiframe.ai 호출 ──
+    # ── apiframe.ai v2 API 호출 ──
+    has_lyrics = bool(req.lyrics and req.lyrics.strip())
+    api_body = {
+        "prompt": req.lyrics.strip() if has_lyrics else suno_prompt,
+        "model": "suno",
+        "sunoParams": {
+            "custom_mode": has_lyrics,
+            "instrumental": False,
+            "model_version": "V4_5PLUS"
+        }
+    }
+    if has_lyrics:
+        api_body["sunoParams"]["style"] = suno_prompt
+
     try:
         resp = http_requests.post(
-            'https://api.apiframe.ai/suno/generate',
+            'https://api.apiframe.ai/v2/music/generate',
             headers={
-                'Authorization': f'Bearer {APIFRAME_KEY}',
+                'X-API-Key': APIFRAME_KEY,
                 'Content-Type': 'application/json'
             },
-            json={
-                'prompt': suno_prompt,
-                'lyrics': req.lyrics if req.lyrics else None,
-                'instrumental': False,
-                'wait_audio': False
-            },
+            json=api_body,
             timeout=30
         )
 
         if not resp.ok:
             api_err = ""
             try:
-                api_err = resp.text[:200]
+                api_err = resp.text[:300]
             except Exception:
                 pass
             return JSONResponse(status_code=502, content={
@@ -625,13 +633,13 @@ def vvip_generate(req: VvipReq):
             })
 
         result = resp.json()
-        task_id = result.get('task_id') or result.get('id')
+        job_id = result.get('id') or result.get('jobId') or result.get('task_id')
 
-        if not task_id:
+        if not job_id:
             return JSONResponse(status_code=502, content={
                 "ok": False,
-                "error": "API에서 task_id를 받지 못했습니다.",
-                "hint": str(result)[:200]
+                "error": "API에서 job ID를 받지 못했습니다.",
+                "hint": str(result)[:300]
             })
 
         # ── 완료 대기 폴링 (최대 3분) ──
@@ -641,25 +649,27 @@ def vvip_generate(req: VvipReq):
             time.sleep(5)
             try:
                 status_resp = http_requests.get(
-                    f'https://api.apiframe.ai/suno/status/{task_id}',
-                    headers={'Authorization': f'Bearer {APIFRAME_KEY}'},
+                    f'https://api.apiframe.ai/v2/jobs/{job_id}',
+                    headers={'X-API-Key': APIFRAME_KEY},
                     timeout=15
                 )
                 status_data = status_resp.json()
-            except Exception as poll_err:
+            except Exception:
                 continue
 
-            if status_data.get('status') == 'completed':
-                tracks = status_data.get('tracks', [])
+            job_status = (status_data.get('status') or '').upper()
+            if job_status == 'COMPLETED':
+                res = status_data.get('result', status_data)
+                tracks = res.get('tracks', [])
                 if tracks:
-                    audio_url = tracks[0].get('audio_url')
+                    audio_url = tracks[0].get('audioUrl') or tracks[0].get('audio_url')
                     title = tracks[0].get('title', 'VVIP Song')
                 break
-            elif status_data.get('status') == 'failed':
+            elif job_status == 'FAILED':
                 return JSONResponse(status_code=502, content={
                     "ok": False,
                     "error": "Suno 곡 생성이 실패했습니다.",
-                    "hint": status_data.get('error', '다시 시도해 주세요')
+                    "hint": str(status_data.get('error', '다시 시도해 주세요'))[:200]
                 })
 
         if not audio_url:
