@@ -729,11 +729,11 @@ def _midi_to_note_name(midi_num):
     note = _NOTE_NAMES_SHARP[midi_num % 12]
     return f"{note}{octave}"
 
-def _extract_melody_impl(audio_path, bpm=120, max_seconds=90):
+def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
     """오디오 파일에서 보컬 멜로디 추출 — librosa pyin 기반"""
     import librosa
 
-    # 모노 22050Hz, 최대 90초
+    # 모노 22050Hz, 최대 300초 (5분 — 일반 곡 전체 커버)
     y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=max_seconds)
 
     # 하모닉/퍼커시브 분리 — 드럼 제거
