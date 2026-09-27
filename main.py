@@ -595,7 +595,7 @@ def vvip_generate(req: VvipReq):
     if req.chords:
         suno_prompt += f", chord progression: {req.chords}"
 
-    # ── apiframe.ai v2 API 호출 ──
+    # ── apiframe.ai v2 API 호출 (비동기: job_id만 즉시 반환) ──
     has_lyrics = bool(req.lyrics and req.lyrics.strip())
     api_body = {
         "prompt": req.lyrics.strip() if has_lyrics else suno_prompt,
@@ -642,47 +642,11 @@ def vvip_generate(req: VvipReq):
                 "hint": str(result)[:300]
             })
 
-        # ── 완료 대기 폴링 (최대 3분) ──
-        audio_url = None
-        title = None
-        for _ in range(36):
-            time.sleep(5)
-            try:
-                status_resp = http_requests.get(
-                    f'https://api.apiframe.ai/v2/jobs/{job_id}',
-                    headers={'X-API-Key': APIFRAME_KEY},
-                    timeout=15
-                )
-                status_data = status_resp.json()
-            except Exception:
-                continue
-
-            job_status = (status_data.get('status') or '').upper()
-            if job_status == 'COMPLETED':
-                res = status_data.get('result', status_data)
-                tracks = res.get('tracks', [])
-                if tracks:
-                    audio_url = tracks[0].get('audioUrl') or tracks[0].get('audio_url')
-                    title = tracks[0].get('title', 'VVIP Song')
-                break
-            elif job_status == 'FAILED':
-                return JSONResponse(status_code=502, content={
-                    "ok": False,
-                    "error": "Suno 곡 생성이 실패했습니다.",
-                    "hint": str(status_data.get('error', '다시 시도해 주세요'))[:200]
-                })
-
-        if not audio_url:
-            return JSONResponse(status_code=504, content={
-                "ok": False,
-                "error": "생성 시간 초과 (3분). 다시 시도해 주세요."
-            })
-
+        # 즉시 반환 — 클라이언트가 /vvip_status/{job_id}로 폴링
         return JSONResponse(content={
             "ok": True,
-            "audio_url": audio_url,
-            "title": title,
-            "task_id": task_id,
+            "job_id": job_id,
+            "status": "PROCESSING",
             "matched_artists": matched_artists
         })
 
@@ -690,6 +654,69 @@ def vvip_generate(req: VvipReq):
         return JSONResponse(status_code=502, content={
             "ok": False,
             "error": f"API 연결 실패: {str(e)}"
+        })
+
+
+@app.get("/vvip_status/{job_id}")
+def vvip_status(job_id: str):
+    """비동기 VVIP 곡 생성 상태 조회 — 클라이언트가 5초마다 폴링"""
+    if not APIFRAME_KEY:
+        return JSONResponse(status_code=500, content={
+            "ok": False, "error": "API 키 미설정"
+        })
+    try:
+        status_resp = http_requests.get(
+            f'https://api.apiframe.ai/v2/jobs/{job_id}',
+            headers={'X-API-Key': APIFRAME_KEY},
+            timeout=15
+        )
+        if not status_resp.ok:
+            return JSONResponse(status_code=502, content={
+                "ok": False,
+                "error": f"상태 조회 실패 (HTTP {status_resp.status_code})"
+            })
+        status_data = status_resp.json()
+    except http_requests.exceptions.RequestException as e:
+        return JSONResponse(status_code=502, content={
+            "ok": False,
+            "error": f"상태 조회 연결 실패: {str(e)}"
+        })
+
+    job_status = (status_data.get('status') or '').upper()
+
+    if job_status == 'COMPLETED':
+        res = status_data.get('result', status_data)
+        tracks = res.get('tracks', [])
+        audio_url = None
+        title = 'VVIP Song'
+        if tracks:
+            audio_url = tracks[0].get('audioUrl') or tracks[0].get('audio_url')
+            title = tracks[0].get('title', title)
+        if not audio_url:
+            return JSONResponse(status_code=502, content={
+                "ok": False,
+                "error": "완료되었으나 오디오 URL을 찾을 수 없습니다.",
+                "hint": str(res)[:300]
+            })
+        return JSONResponse(content={
+            "ok": True,
+            "status": "COMPLETED",
+            "audio_url": audio_url,
+            "title": title,
+            "job_id": job_id
+        })
+    elif job_status == 'FAILED':
+        return JSONResponse(content={
+            "ok": False,
+            "status": "FAILED",
+            "error": "Suno 곡 생성이 실패했습니다.",
+            "hint": str(status_data.get('error', '다시 시도해 주세요'))[:200]
+        })
+    else:
+        return JSONResponse(content={
+            "ok": True,
+            "status": "PROCESSING",
+            "job_id": job_id
         })
 
 
