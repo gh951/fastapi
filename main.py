@@ -747,7 +747,7 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
         onset_threshold=0.5,
         frame_threshold=0.3,
         minimum_note_length=80,                       # 80ms 미만 노이즈 제거
-        minimum_frequency=librosa.note_to_hz('C3'),   # 보컬 하한
+        minimum_frequency=librosa.note_to_hz('C4'),   # cgo-375: C3→C4 보컬 하한 (베이스/기타 악기음 제거)
         maximum_frequency=librosa.note_to_hz('C6'),   # 보컬 상한
         melodia_trick=True,                           # 주선율(보컬) 추출 강화
     )
@@ -823,7 +823,7 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
 
 @app.post("/extract_melody")
 async def extract_melody_endpoint(request: Request):
-    """cgo-374: 보컬 멜로디 추출 — Spotify Basic Pitch AI 채보 엔진 (무료, 오픈소스)"""
+    """cgo-375: 보컬 멜로디 추출 — Spotify Basic Pitch AI (C4~C6 보컬 전용, 악기음 제거)"""
     data = await request.json()
     audio_url = data.get("audio_url")
     bpm = float(data.get("bpm", 120))
