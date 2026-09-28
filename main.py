@@ -1271,6 +1271,124 @@ VOICE_MAP: Dict[str, str] = {
     '최예나': 'pop-punk Korean female rapper harmoniously mixing cute trap flow with bubbly energy',
     '리사': 'global Billboard-hitting female rapper with Thai-international swagger and trap queen energy',
 
+
+    # ═══════════════════════════════════════════════════════════
+    # cgo-384: 트로트 남자 보컬 50명
+    # ═══════════════════════════════════════════════════════════
+    # ── 🎵 전통 트로트 개척자 & 전설 ──
+    '남인수': 'crystalline pure-toned male trot tenor revered as the emperor of classic Korean enka',
+    '고복수': 'plaintive gentle male trot vocal soothing homesick hearts with simple heartfelt melody',
+    '백년설': 'rich earthy male trot baritone comforting working-class souls with rustic warmth',
+    '현인': 'pioneering male trot vocalist with signature vibrato who opened Korean popular music',
+    '박재홍': 'powerful open-throated male trot singer belting folk sorrows with piercing clarity',
+    '진방남': 'sorrowful bending-note master male trot vocalist with deeply mournful delivery',
+    '이인권': 'warm low-register male trot vocalist evoking hometown nostalgia with gentle phrasing',
+    '도미': 'sophisticated mid-century male trot vocalist bridging modern melody with traditional roots',
+    '배호': 'immortal deep baritone male trot vocalist who elevated the genre with noble dignity',
+    '한복남': 'humorous witty male trot vocalist who popularized comedic storytelling with catchy groove',
+    # ── 👑 트로트 황금기 & 양대산맥 레전드 ──
+    '남진': 'Elvis-inspired charismatic male trot vocalist who pioneered dance-trot with stage magnetism',
+    '최희준': 'elegant baritone male trot vocalist singing life melancholy with refined literary grace',
+    '태진아': 'hook-driven addictive male trot vocalist dominating with catchy refrains and deep emotion',
+    '송대관': 'quintessentially Korean optimistic male trot vocalist with earthy rustic warmth and joy',
+    '설운도': 'genius singer-songwriter male trot vocalist blending samba and twist rhythms creatively',
+    '현철': 'uniquely flavored male trot vocalist with signature nasal bending-note technique mastery',
+    '조항조': 'mournful mid-bass male trot vocalist commanding orchestral-scale grand ballad narratives',
+    # ── ⚡ 파워 락·댄스 & 뉴웨이브 ──
+    '강진': 'rhythmic groove master male trot vocalist who electrified all generations with one hit',
+    '박현빈': 'classically trained powerful high-note male trot vocalist who launched power-trot era',
+    '신유': 'sweet romantic tenor male trot vocalist with handsome appeal and lyrical sensitivity',
+    '진성': 'explosive raspy male trot vocalist with gut-wrenching sorrow and raw emotional power',
+    '박상철': 'brass-backed powerhouse male dance-trot vocalist with commanding stage energy',
+    '영탁': 'rhythmic all-rounder male trot vocalist with powerful diction and stage-breaking energy',
+    '장민호': 'refined groovy male trot vocalist with idol-trained polish and solid vocal technique',
+    '이찬원': 'traditional bending-note technician male trot vocalist with earthy fermented-bean voice',
+    '김호중': 'operatic tenor male trot vocalist completing orchestral-scale power with massive volume',
+    '김수찬': 'flashy showman male new-wave dance-trot vocalist with infectious entertainment energy',
+    # ── 🪕 감성 서정 & 포크 융합 ──
+    '김희재': 'polished hybrid male trot vocalist blending precise choreography with sweet light tenor',
+    '오승근': 'folk-rooted gentle male trot vocalist comforting the nation with plain warm delivery',
+    '진시몬': 'folk-ballad optimized male trot vocalist with sweet sentimental melodic craftsmanship',
+    '나태주': 'clear steady male pop-trot vocalist hiding deep lyricism behind flashy performance',
+    '배일호': 'earthy rustic male trot vocalist combining rural folk sentiment with trot tradition',
+    '김용필': 'dignified low-tone male trot vocalist who sings like reciting poetry with gravitas',
+    '안성훈': 'pristine clean high-note male healing-ballad trot vocalist with flawless precision',
+    '박지현': 'bright energetic male trot vocalist radiating vitality with open airy tenor delivery',
+    '최수호': 'minimalist acoustic male trot vocalist with deep resonance on simple folk melodies',
+    # ── 🎻 국악 크로스오버 & 시네마틱 ──
+    '민수현': 'gentle refined male trot vocalist delivering traditional depth with elegant composure',
+    '최재명': 'pansori-infused cinematic male trot vocalist with elaborate melodic architecture and grand projection',
+    '정동원': 'prodigy male trot vocalist mastering saxophone to orchestra with epic narrative depth',
+    '손태진': 'classical crossover male trot vocalist harmonizing operatic power with grand orchestral scale',
+    '최우진': 'stable soaring high-note male trot vocalist riding grand traditional Korean melodies',
+    '박서진': 'percussion-performing male trot vocalist with deeply sorrowful han-infused vocal power',
+    '강태관': 'pansori-based male trot vocalist showing textbook traditional crossover with profound depth',
+    '고영열': 'master-architect male trot vocalist radically mixing pansori, piano and trot harmonics',
+    '조명섭': 'bel-canto male trot vocalist creating cinematic time-slip narratives with unique timbre',
+    '영광': 'rugged bending-note male trot vocalist cutting through grand horn and string ensembles',
+    '남승민': 'cinematic male trot vocalist riding large string sections with emotional stability and depth',
+
+    # ═══════════════════════════════════════════════════════════
+    # cgo-384: 트로트 여자 보컬 50명
+    # ═══════════════════════════════════════════════════════════
+    # ── 🎵 전통 트로트 여류 전설 ──
+    '황금심': 'crystalline nightingale female trot vocalist who dominated early classic Korean trot',
+    '이난영': 'legendary nasal-melody female trot vocalist who comforted a colonized nation with sorrow',
+    '심연옥': 'deep resonant female trot vocalist who tenderly soothed wartime refugees with warmth',
+    '박재란': 'brilliant nightingale female trot vocalist celebrated as the golden voice of the 50s-60s',
+    '백설희': 'hauntingly beautiful female trot vocalist who captured Korean han in exquisite melody',
+    '박애경': 'legendary harmony female trot vocalist showcasing textbook traditional duet vocal mastery',
+    '김향미': 'rustic mid-low bending-note female trot vocalist anchoring legendary harmony foundations',
+    '지화자': 'stable powerhouse female trot vocalist with the most reliable pentatonic vocal delivery',
+    '안다성': 'elegant 60s female trot vocalist layering sophisticated arrangements over traditional melody',
+    '이미자': 'the living goddess of Korean trot elegy with immortal bending-note vocal mythology',
+    # ── 👑 트로트 황금기 여제들 ──
+    '하춘화': 'textbook female trot vocalist with decades of live performance forging unshakeable technique',
+    '김연자': 'enka-trot queen female vocalist who conquered both Japan and Korea with explosive power',
+    '김수희': 'powerful pansori-toned female trot vocalist who made the whole nation cry and laugh',
+    '주현미': 'pharmacist-turned female trot vocalist with crystalline falsetto and delicate high bending',
+    '문희옥': 'textbook traditional female trot vocalist with the most flavorful classic bending delivery',
+    '현숙': 'positive upbeat female dance-trot vocalist who pioneered rhythmic trot with infectious joy',
+    '최진희': 'pop-ballad crossover female trot vocalist perfectly blending Western harmony with sorrow',
+    '방실이': 'powerhouse big-voiced female dance-trot vocalist who pioneered energetic trot showmanship',
+    '한혜진': 'husky deep mid-low female trot vocalist adding mature depth to adult contemporary trot',
+    '한복희': 'stage-dominating female trot vocalist with addictive groove and magnetic crowd control',
+    # ── ⚡ 파워 댄스 & 뉴웨이브 ──
+    '장윤정': 'genre-reshaping female trot queen who single-handedly revived trot for a new generation',
+    '홍진영': 'cute nasally charming female electronic dance-trot vocalist with modern pop appeal',
+    '김혜연': 'powerful venue-shaking female dance-trot vocalist commanding massive event stages',
+    '서지오': 'rapper-style female dance-trot vocalist maintaining rock-solid technique through choreography',
+    '은가은': 'musical-theater trained female power-trot vocalist with soaring high-note stage presence',
+    '황우림': 'idol-trained groovy female new-wave trot vocalist incorporating Latin rhythms creatively',
+    '별사랑': 'all-range female trot technician vocalist spanning deep bass to soaring high notes',
+    '허찬미': 'idol-crossover female trot vocalist with trendy beat-riding ability and sharp performance',
+    '요요미': 'cute bright female trot vocalist dominating highway-groove beats with adorable charm',
+    '강혜연': 'girl-group trained female trot vocalist hiding solid traditional vocal power behind charm',
+    # ── 🪕 감성 서정 & 포크 융합 ──
+    '홍자': 'thick soulful female trot vocalist showing peak sorrowful delivery with gomtang warmth',
+    '우연이': 'folk-rock gentle female trot vocalist comforting the nation with plain heartfelt warmth',
+    '금잔디': 'highway queen female trot vocalist with tender yet smooth voice soothing working hearts',
+    '정다경': 'dancer-trained graceful female trot vocalist with clear deep lyrical vocal delivery',
+    '김나희': 'crystal-clear healing female trot vocalist who shattered comedian-to-singer stereotypes',
+    '강예슬': 'pure refreshing female trot vocalist providing emotional calm with angelic bright tone',
+    '마리아': 'first foreign trot champion female vocalist who mastered Korean bending-note technique',
+    '김다현': 'young prodigy female trot vocalist narrating deep life stories with mature emotional arc',
+    '김태연': 'pansori-master young female trot vocalist melting fierce traditional soul into acoustic folk',
+    '윤태화': 'solid expressive female trot vocalist carrying traditional lyrical depth with steady power',
+    # ── 🎻 국악 크로스오버 & 시네마틱 ──
+    '송가인': 'Miss Trot champion female vocalist with overwhelming pansori-based power shattering Korean han',
+    '양지은': 'pansori-certified female crossover trot vocalist singing miracles over grand orchestrations',
+    '홍지윤': 'doll-faced female trot vocalist hiding explosive pansori-scaled cinematic high-note power',
+    '김의영': 'spicy capsaicin-sharp female trot vocalist with traditional bending and pansori flair',
+    '전유진': 'prodigious genius female cinematic trot vocalist effortlessly riding symphonic waves',
+    '오유진': 'gayageum-playing female hybrid trot vocalist bridging traditional Korean music and trot',
+    '최향': 'rich-volume female cinematic trot vocalist standing firm within grand horn ensembles',
+    '풍금': 'refined female trot vocalist who distills deep traditional han into cinematic film-scale delivery',
+    '신미래': 'dreamy atmospheric female trot vocalist reinterpreting 30s-40s Korean folk with ethereal tone',
+    '나영': 'explosive next-generation female cinematic trot vocalist with overwhelming pansori projection',
+
+    # Total: 97 artists, 97 entries
+
 }
 
 
