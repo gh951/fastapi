@@ -2711,6 +2711,7 @@ def vvip_generate(req: VvipReq):
         })
 
     prompt = req.prompt
+    matched_artists = []  # cgo-393 fix: voice_mix_id 경로에서도 참조되므로 사전 초기화
 
     # ── cgo-390: VOICE_MIX 프리셋 사용 경로 ──
     if req.voice_mix_id and req.voice_mix_id in VOICE_MIX:
