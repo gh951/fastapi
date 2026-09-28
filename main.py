@@ -2779,7 +2779,13 @@ def vvip_generate(req: VvipReq):
             length += len(p) + 2
         timbre_short = ', '.join(trimmed) if trimmed else parts[0][:120]
 
-    suno_style = f"{vocal_tag}{timbre_short}, {req.style}, {req.bpm} BPM, key of {req.key}"
+    # cgo-397: 트롯 등 보컬 아키타입이 강한 장르 → 음색을 뒤에 배치 (recency bias)
+    _strong_vocal_genres = ('trot',)
+    _is_strong_genre = any(g in req.style.lower() for g in _strong_vocal_genres)
+    if _is_strong_genre and timbre_short:
+        suno_style = f"{req.style}, {req.bpm} BPM, key of {req.key}, {vocal_tag}singer voice: {timbre_short}"
+    else:
+        suno_style = f"{vocal_tag}{timbre_short}, {req.style}, {req.bpm} BPM, key of {req.key}"
 
     # lyrics 필드: 가사 + [Verse]/[Chorus] 메타태그 삽입
     has_lyrics = bool(req.lyrics and req.lyrics.strip())
