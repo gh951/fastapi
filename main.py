@@ -2727,11 +2727,11 @@ def vvip_generate(req: VvipReq):
             if artist in prompt and description not in seen_descriptions:
                 matched_artists.append(artist)
                 seen_descriptions.add(description)
-        if len(seen_descriptions) < 1:
+        if len(seen_descriptions) < 2:  # cgo-403: 최소 2명 (저작권 보호 — 단일 아티스트 음색 복제 방지)
             return JSONResponse(status_code=400, content={
                 "ok": False,
-                "error": "보컬리스트를 1명 이상 선택해 주세요.",
-                "hint": "보컬 선택에서 장르·성별을 고른 뒤 추첨하거나 카드를 직접 선택하세요",
+                "error": f"보컬리스트를 2명 이상 선택해 주세요. (현재 {len(seen_descriptions)}명)",
+                "hint": "저작권 보호를 위해 최소 2명의 보컬 믹스가 필요합니다. 예: 임재범+훌리오이글레시아스",
                 "matched": len(seen_descriptions)
             })
         converted_prompt = prompt
