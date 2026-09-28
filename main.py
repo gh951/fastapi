@@ -2779,13 +2779,58 @@ def vvip_generate(req: VvipReq):
             length += len(p) + 2
         timbre_short = ', '.join(trimmed) if trimmed else parts[0][:120]
 
-    # cgo-397: 트롯 등 보컬 아키타입이 강한 장르 → 음색을 뒤에 배치 (recency bias)
-    _strong_vocal_genres = ('trot',)
-    _is_strong_genre = any(g in req.style.lower() for g in _strong_vocal_genres)
-    if _is_strong_genre and timbre_short:
-        suno_style = f"{req.style}, {req.bpm} BPM, key of {req.key}, {vocal_tag}singer voice: {timbre_short}"
+    # cgo-401: 전 장르 보컬 아키타입 경계 허물기
+    # Suno가 장르 키워드("trot","hip-hop","EDM" 등)를 보면 해당 장르의 보컬 아키타입을 강제 적용
+    # → VOICE_MIX 1000개 + VOICE_MAP 1225개 음색이 무시됨
+    # 해법: 보컬 음색이 지정된 경우, 장르 키워드를 음악적 특성 서술로 대체
+    # → 장르 느낌(리듬·악기·분위기)은 유지하면서 보컬은 사용자가 선택한 대로 적용
+    # → 보컬 미지정 시에는 원래 장르 키워드 유지 (Suno 기본 보컬 OK)
+    _GENRE_DESCRIPTORS_401 = {
+        'korean trot': 'Korean retro ballad, 2-beat duple rhythm, emotional vibrato, sentimental',
+        'trot': 'Korean retro ballad, 2-beat duple rhythm, emotional vibrato, sentimental',
+        'hip-hop': 'rhythmic vocal flow, heavy 808 bass, trap hi-hats, boom-bap beat',
+        'hip hop': 'rhythmic vocal flow, heavy 808 bass, trap hi-hats, boom-bap beat',
+        'rap': 'rhythmic vocal delivery, heavy bass, snappy snare, boom-bap beat',
+        'edm dance': 'electronic synth, 4-on-the-floor beat, energetic build-up and drop',
+        'edm': 'electronic synth, 4-on-the-floor beat, energetic build-up and drop',
+        'rock': 'electric guitar driven, powerful drums, distorted tone, energetic',
+        'heavy metal': 'heavy distorted guitar riffs, double bass drum, aggressive power',
+        'metal': 'heavy distorted guitar riffs, double bass drum, aggressive power',
+        'k-pop': 'Korean modern pop, catchy hook, polished production, dynamic arrangement',
+        'kpop': 'Korean modern pop, catchy hook, polished production, dynamic arrangement',
+        'korean ballad': 'Korean emotional ballad, piano strings, slow tempo, heartfelt melody',
+        'r&b soul': 'smooth groove, neo-soul chords, warm bass, sensual laid-back rhythm',
+        'r&b': 'smooth groove, neo-soul chords, warm bass, sensual laid-back rhythm',
+        'rnb': 'smooth groove, neo-soul chords, warm bass, sensual laid-back rhythm',
+        'soul': 'soulful groove, gospel harmony, warm organic feel',
+        'jazz': 'jazz swing feel, walking bass, brushed drums, extended chord voicings',
+        'blues': 'blues shuffle rhythm, 12-bar progression, warm guitar, soulful bends',
+        'country': 'acoustic guitar, steel guitar, Nashville production, storytelling melody',
+        'reggae': 'offbeat skank guitar, deep bass, laid-back groove, tropical feel',
+        'latin': 'Latin percussion, clave rhythm, warm brass, passionate melody',
+        'classical': 'orchestral strings, dynamic expression, refined melody, concert hall',
+        'ambient': 'atmospheric pads, ethereal texture, slow evolving soundscape, dreamy',
+        'folk acoustic': 'acoustic guitar, gentle fingerpicking, warm organic storytelling',
+        'folk': 'acoustic guitar, gentle fingerpicking, warm organic storytelling',
+        'pop ballad': 'emotional pop ballad, piano-driven, soaring melody, heartfelt',
+        'pop': 'catchy pop melody, polished production, upbeat arrangement',
+    }
+    import re as _re401
+    _style_for_suno = req.style
+    _genre_replaced = False
+    if timbre_short:
+        # 보컬 음색이 있을 때만 장르 키워드를 음악적 서술로 대체
+        # 긴 키워드부터 매칭 (예: "korean trot"이 "trot"보다 먼저)
+        for _gk in sorted(_GENRE_DESCRIPTORS_401.keys(), key=len, reverse=True):
+            if _gk in _style_for_suno.lower():
+                _pattern = _re401.compile(_re401.escape(_gk), _re401.IGNORECASE)
+                _style_for_suno = _pattern.sub(_GENRE_DESCRIPTORS_401[_gk], _style_for_suno, count=1)
+                _genre_replaced = True
+                break
+    if timbre_short:
+        suno_style = f"{vocal_tag}{timbre_short}, {_style_for_suno}, {req.bpm} BPM, key of {req.key}"
     else:
-        suno_style = f"{vocal_tag}{timbre_short}, {req.style}, {req.bpm} BPM, key of {req.key}"
+        suno_style = f"{vocal_tag}{req.style}, {req.bpm} BPM, key of {req.key}"
 
     # lyrics 필드: 가사 + [Verse]/[Chorus] 메타태그 삽입
     has_lyrics = bool(req.lyrics and req.lyrics.strip())
