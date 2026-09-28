@@ -2742,15 +2742,27 @@ def vvip_generate(req: VvipReq):
         if len(seen_descriptions) == 1:
             vocal_timbre = "solo vocal, " + vocal_timbre
 
-    # ── cgo-394: Suno 프롬프트 구조 개편 ──
-    # 성별 태그
+    # ── cgo-395: 성별 태그 강화 + 이성 음색 필터링 ──
     vocal_tag = ""
     if req.vocal == "male":
-        vocal_tag = "male vocals, "
+        vocal_tag = "male vocals only, all male singers, no female vocals, "
     elif req.vocal == "female":
-        vocal_tag = "female vocals, "
+        vocal_tag = "female vocals only, all female singers, no male vocals, "
     elif req.vocal == "duet":
         vocal_tag = "male and female duet, "
+
+    # cgo-395: VOICE_MIX 프리셋에서 이성 음색 설명 제거
+    # 예: 남성 선택 시 "sticky deep husky female" 세그먼트 제거
+    import re as _re395
+    if req.vocal in ("male", "female") and vocal_timbre:
+        _opp = "female" if req.vocal == "male" else "male"
+        _segs = [s.strip() for s in vocal_timbre.split(',') if s.strip()]
+        _filtered = [s for s in _segs if not _re395.search(r'\b' + _opp + r'\b', s, _re395.IGNORECASE)]
+        if _filtered:
+            vocal_timbre = ', '.join(_filtered)
+        else:
+            # 전부 제거되면 성별 기본 음색
+            vocal_timbre = "powerful male vocalist" if req.vocal == "male" else "powerful female vocalist"
 
     # style 필드: 보컬 음색 간결화 (120자) + 장르 + BPM + key → 4~7 키워드
     timbre_short = vocal_timbre.strip().strip(',').strip()
