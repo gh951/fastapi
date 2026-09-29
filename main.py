@@ -3327,7 +3327,7 @@ def _extract_melody_impl(audio_path, bpm=120, max_seconds=300):
         onset_threshold=0.5,
         frame_threshold=0.3,
         minimum_note_length=80,                       # 80ms 미만 노이즈 제거
-        minimum_frequency=librosa.note_to_hz('C4'),   # cgo-375: C3→C4 보컬 하한 (베이스/기타 악기음 제거)
+        minimum_frequency=librosa.note_to_hz('B2'),    # cgo-411: C4→B2 보컬 하한 확장 (남성 저음 보컬 잘림 방지, 베이스 악기는 melodia_trick이 필터)
         maximum_frequency=librosa.note_to_hz('C6'),   # 보컬 상한
         melodia_trick=True,                           # 주선율(보컬) 추출 강화
     )
