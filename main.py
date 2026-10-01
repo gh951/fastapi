@@ -3467,6 +3467,150 @@ def vvip_info():
     })
 
 
+# ═══ cgo-421: AI 가사 생성 (Udio Lyrics via apiframe.ai — 1 credit) ═══
+
+@app.post("/generate_lyrics")
+def generate_lyrics(body: dict):
+    """AI 가사 생성 — Udio Write Lyrics API (1 credit, 텍스트만 반환, 음악 생성 없음)"""
+    if not APIFRAME_KEY:
+        return JSONResponse(status_code=500, content={
+            "ok": False, "error": "API key가 설정되지 않았습니다."
+        })
+
+    topic = (body.get('topic') or '').strip()
+    style = (body.get('style') or 'pop ballad').strip()
+
+    if not topic:
+        return JSONResponse(status_code=400, content={
+            "ok": False, "error": "주제/분위기를 입력해 주세요."
+        })
+
+    # 한국어 가사 요청 프롬프트 구성
+    lyrics_prompt = f"Korean song lyrics about: {topic}. Style: {style}. Write in Korean (한국어). Include [Verse], [Chorus], [Bridge] structure tags."
+    if len(lyrics_prompt) > 2000:
+        lyrics_prompt = lyrics_prompt[:2000]
+
+    try:
+        resp = http_requests.post(
+            'https://api.apiframe.ai/v2/music/udio/lyrics',
+            headers={
+                'X-API-Key': APIFRAME_KEY,
+                'Content-Type': 'application/json'
+            },
+            json={
+                "prompt": lyrics_prompt,
+                "duration": 97
+            },
+            timeout=30
+        )
+
+        if not resp.ok:
+            api_err = ""
+            try:
+                api_err = resp.text[:300]
+            except Exception:
+                pass
+            return JSONResponse(status_code=502, content={
+                "ok": False,
+                "error": f"가사 생성 API 호출 실패 (HTTP {resp.status_code})",
+                "hint": api_err or "apiframe.ai 서비스 상태를 확인하세요"
+            })
+
+        result = resp.json()
+
+        # 응답 구조: 즉시 반환 또는 비동기 job
+        # Case 1: 즉시 가사 반환
+        if result.get('result') and result['result'].get('lyrics'):
+            return JSONResponse(content={
+                "ok": True,
+                "lyrics": result['result']['lyrics']
+            })
+
+        # Case 2: 비동기 job → job_id 반환
+        job_id = result.get('id') or result.get('jobId') or result.get('task_id')
+        if job_id:
+            return JSONResponse(content={
+                "ok": True,
+                "job_id": job_id,
+                "status": "PROCESSING"
+            })
+
+        # Case 3: 예상치 못한 응답 — 가사 필드 탐색
+        lyrics_text = result.get('lyrics') or result.get('text') or ''
+        if lyrics_text:
+            return JSONResponse(content={
+                "ok": True,
+                "lyrics": lyrics_text
+            })
+
+        return JSONResponse(status_code=502, content={
+            "ok": False,
+            "error": "가사를 생성하지 못했습니다.",
+            "hint": str(result)[:300]
+        })
+
+    except http_requests.exceptions.RequestException as e:
+        return JSONResponse(status_code=502, content={
+            "ok": False,
+            "error": f"가사 생성 API 연결 실패: {str(e)}"
+        })
+
+
+@app.get("/lyrics_status/{job_id}")
+def lyrics_status(job_id: str):
+    """AI 가사 생성 상태 조회 (비동기 job 폴링)"""
+    if not APIFRAME_KEY:
+        return JSONResponse(status_code=500, content={
+            "ok": False, "error": "API 키 미설정"
+        })
+    try:
+        status_resp = http_requests.get(
+            f'https://api.apiframe.ai/v2/jobs/{job_id}',
+            headers={'X-API-Key': APIFRAME_KEY},
+            timeout=15
+        )
+        if not status_resp.ok:
+            return JSONResponse(status_code=502, content={
+                "ok": False,
+                "error": f"상태 조회 실패 (HTTP {status_resp.status_code})"
+            })
+        status_data = status_resp.json()
+    except http_requests.exceptions.RequestException as e:
+        return JSONResponse(status_code=502, content={
+            "ok": False,
+            "error": f"상태 조회 연결 실패: {str(e)}"
+        })
+
+    job_status = (status_data.get('status') or '').upper()
+
+    if job_status == 'COMPLETED':
+        res = status_data.get('result', status_data)
+        lyrics = res.get('lyrics') or res.get('text') or ''
+        if lyrics:
+            return JSONResponse(content={
+                "ok": True,
+                "status": "COMPLETED",
+                "lyrics": lyrics
+            })
+        return JSONResponse(status_code=502, content={
+            "ok": False,
+            "error": "완료되었으나 가사를 찾을 수 없습니다.",
+            "hint": str(res)[:300]
+        })
+    elif job_status == 'FAILED':
+        return JSONResponse(content={
+            "ok": False,
+            "status": "FAILED",
+            "error": "가사 생성이 실패했습니다."
+        })
+    else:
+        return JSONResponse(content={
+            "ok": True,
+            "status": "PROCESSING",
+            "job_id": job_id
+        })
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
