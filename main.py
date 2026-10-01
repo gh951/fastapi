@@ -3157,6 +3157,15 @@ def vvip_generate(req: VvipReq):
     suno_lyrics = ""
     if has_lyrics:
         raw_lyrics = req.lyrics.strip()
+        # cgo-413: 주제/설명 vs 실제 가사 자동 판별
+        # 3줄 이하 + 100자 미만 + 메타태그 없음 → 주제 설명으로 간주
+        _lyric_lines_chk = [l for l in raw_lyrics.split('\n') if l.strip()]
+        _has_meta_chk = any(tag in raw_lyrics for tag in ['[Verse', '[Chorus', '[Bridge', '[Intro', '[Outro', '[Hook'])
+        if not _has_meta_chk and len(_lyric_lines_chk) <= 2 and len(raw_lyrics) < 100:
+            # 짧은 설명문 → 가사가 아닌 주제/분위기로 취급
+            has_lyrics = False
+            suno_style = suno_style.rstrip() + ", " + raw_lyrics
+    if has_lyrics:
         # 이미 메타태그가 있으면 그대로, 없으면 기본 구조 삽입
         has_metatags = any(tag in raw_lyrics for tag in ['[Verse', '[Chorus', '[Bridge', '[Intro', '[Outro', '[Hook'])
         if has_metatags:
