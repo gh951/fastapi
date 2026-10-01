@@ -3467,102 +3467,187 @@ def vvip_info():
     })
 
 
-# ═══ cgo-421: AI 가사 생성 (Udio Lyrics via apiframe.ai — 1 credit) ═══
+# ═══ cgo-422: AI 가사 생성 (Udio API + 로컬 폴백 생성기) ═══
+import random as _lyrics_random
+import hashlib as _lyrics_hash
+
+def _generate_korean_lyrics(topic: str, style: str) -> str:
+    """서버 로컬 한국어 가사 생성기 — Udio API 실패 시 폴백"""
+    seed = int(_lyrics_hash.md5(f"{topic}{style}{time.time():.0f}".encode()).hexdigest()[:8], 16)
+    rng = _lyrics_random.Random(seed)
+    kw = topic.lower()
+    # 감정 분류
+    sad_kw = ['이별','슬픈','눈물','그리움','아픔','외로','헤어','비','울','잊','떠나','보내']
+    love_kw = ['사랑','설렘','첫사랑','두근','키스','고백','달콤','행복','너','그대','함께']
+    night_kw = ['밤','별','달','새벽','어둠','불빛','노을','하늘']
+    hope_kw = ['희망','꿈','미래','빛','시작','용기','날개','비상']
+    is_sad = any(w in kw for w in sad_kw)
+    is_love = any(w in kw for w in love_kw)
+    is_night = any(w in kw for w in night_kw)
+    is_hope = any(w in kw for w in hope_kw)
+    if not (is_sad or is_love or is_night or is_hope):
+        is_love = True
+    # 운율 어미 풀
+    endings_sad = ['잖아','니까','는데','었어','텐데','겠지','을까','잖아요','나 봐','다고','래도','인걸']
+    endings_love = ['잖아','고 싶어','할래','일까','처럼','니까','거든','보다','같아','하나','어도']
+    endings_hope = ['거야','할 거야','테니까','잖아','일 테니','될 거야','가자','고 싶어','이니까','인걸']
+    # 주제별 가사 소재
+    sad_lines_v = [
+        f'텅 빈 거리에 {topic}의 흔적만 남아',f'지워지지 않는 기억 속에서 헤매여',f'너의 빈자리가 이렇게 큰 줄 몰랐어',
+        f'흐린 창밖으로 흘러내리는 빗물처럼',f'돌아올 수 없는 그 시간이 아프{rng.choice(endings_sad)}',
+        f'입술 끝에 맴도는 이름 하나',f'아직도 네가 있는 것 같{rng.choice(endings_sad)}',
+        f'바람이 불면 너의 향기가 스쳐가',f'매일 밤 나를 찾아오는 그리움이',f'사랑이 이별이 되는 순간을 난',
+        f'우리가 걸었던 그 길이 흐릿해져',f'시간이 흘러도 이 아픔은 그대로{rng.choice(["인데","잖아","인걸"])}',
+    ]
+    sad_lines_c = [
+        f'보고 싶어 보고 싶어 또 보고 싶어',f'잊으려 해도 자꾸만 떠올라',f'이 밤이 지나면 괜찮아질까',
+        f'눈물이 마를 때까지 기다릴게',f'너 없는 세상은 너무 {rng.choice(["차가워","외로워","텅 비어"])}',
+        f'다시 한번만 네 곁에 있고 싶어',f'사랑했{rng.choice(["잖아","었는데","다고"])} 정말 사랑했{rng.choice(["잖아","었는데","다고"])}',
+    ]
+    love_lines_v = [
+        f'네가 웃을 때 세상이 환해지는 것 같아',f'{topic}처럼 달콤한 이 순간이',f'심장이 두근두근 멈추질 않아',
+        f'너의 눈빛 속에 내가 담겨 있{rng.choice(endings_love)}',f'매일이 특별해지는 건 네 덕분{rng.choice(["이야","인걸","이라서"])}',
+        f'손끝이 닿는 순간 전부 다 멈춰',f'이런 감정은 처음이라 어쩔 줄 몰라',
+        f'네 목소리만 들어도 하루가 완성돼',f'꿈인지 현실인지 모를 만큼 행복해',f'세상 누구보다 빛나는 사람',
+    ]
+    love_lines_c = [
+        f'너를 사랑해 오늘도 내일도 영원히',f'이 세상 끝까지 함께 걸어갈래',f'너라는 기적이 내게 찾아온 거야',
+        f'매 순간 네가 있어 난 완벽해',f'사랑한다 말할게 수백 번이라도',
+        f'네 곁이 나의 전부{rng.choice(["야","인 걸","라서"])}',
+    ]
+    night_lines_v = [
+        f'별빛이 쏟아지는 이 밤에',f'어둠 속에서 빛나는 너의 {rng.choice(["미소","눈빛","모습"])}',
+        f'달이 우리를 비추는 이 순간',f'새벽 공기 속에 {topic}이 스며들어',f'창밖으로 내리는 {rng.choice(["달빛","별빛","불빛"])}이',
+        f'고요한 밤하늘에 소원을 빌어',f'도시의 불빛 아래 우리 둘만의 시간',
+    ]
+    hope_lines_v = [
+        f'어둠이 지나면 반드시 빛이 와',f'{topic}을 향해 두 팔을 펼쳐',f'넘어져도 다시 일어나는 거야',
+        f'내 안의 날개를 활짝 펴는 순간',f'두려움 너머에 기다리는 내일이',f'포기하지 않을 거야 끝까지',
+    ]
+    hope_lines_c = [
+        f'날아올라 더 높이 더 멀리',f'우리의 꿈은 멈추지 않아',f'빛나는 내일을 향해 달려가자',
+        f'할 수 있어 난 할 수 있어 믿어봐',
+    ]
+    lines = []
+    lines.append('[Verse 1]')
+    if is_sad:
+        v1 = rng.sample(sad_lines_v, min(4, len(sad_lines_v)))
+    elif is_love:
+        v1 = rng.sample(love_lines_v, min(4, len(love_lines_v)))
+    elif is_night:
+        v1 = rng.sample(night_lines_v, min(4, len(night_lines_v)))
+    else:
+        v1 = rng.sample(hope_lines_v, min(4, len(hope_lines_v)))
+    lines.extend(v1)
+    lines.append('')
+    lines.append('[Chorus]')
+    if is_sad:
+        ch = rng.sample(sad_lines_c, min(4, len(sad_lines_c)))
+    elif is_love:
+        ch = rng.sample(love_lines_c, min(4, len(love_lines_c)))
+    elif is_hope:
+        ch = rng.sample(hope_lines_c, min(3, len(hope_lines_c)))
+    else:
+        ch = rng.sample(love_lines_c, min(3, len(love_lines_c)))
+    lines.extend(ch)
+    lines.append('')
+    lines.append('[Verse 2]')
+    if is_sad:
+        pool2 = [l for l in sad_lines_v if l not in v1]
+        if len(pool2) < 3:
+            pool2 = sad_lines_v
+        v2 = rng.sample(pool2, min(4, len(pool2)))
+    elif is_love:
+        pool2 = [l for l in love_lines_v if l not in v1]
+        if len(pool2) < 3:
+            pool2 = love_lines_v
+        v2 = rng.sample(pool2, min(4, len(pool2)))
+    elif is_night:
+        pool2 = [l for l in night_lines_v if l not in v1]
+        if len(pool2) < 3:
+            pool2 = night_lines_v
+        v2 = rng.sample(pool2, min(4, len(pool2)))
+    else:
+        pool2 = [l for l in hope_lines_v if l not in v1]
+        if len(pool2) < 3:
+            pool2 = hope_lines_v
+        v2 = rng.sample(pool2, min(4, len(pool2)))
+    lines.extend(v2)
+    lines.append('')
+    lines.append('[Chorus]')
+    lines.extend(ch)
+    lines.append('')
+    lines.append('[Bridge]')
+    bridges_sad = [f'시간아 제발 멈춰줘',f'한 번만 더 안아줄 수 있다면',f'이게 마지막이라 해도',f'우리의 계절은 끝나지 않아']
+    bridges_love = [f'매일 밤 꿈속에서도 너를 만나',f'세상이 뭐라 해도 난 너야',f'이 노래가 끝나도 우린 영원해',f'약속할게 영원히 네 곁에']
+    bridges_hope = [f'지금 이 순간이 시작이야',f'함께라면 못할 게 없어',f'내일은 오늘보다 더 빛날 거야',f'눈을 감고 느껴봐 우리의 미래를']
+    if is_sad:
+        br = rng.sample(bridges_sad, min(2, len(bridges_sad)))
+    elif is_love or is_night:
+        br = rng.sample(bridges_love, min(2, len(bridges_love)))
+    else:
+        br = rng.sample(bridges_hope, min(2, len(bridges_hope)))
+    lines.extend(br)
+    lines.append('')
+    lines.append('[Outro]')
+    if is_sad:
+        lines.append(rng.choice([f'{topic}... 안녕',f'그래도 사랑했었다',f'이 노래가 끝나면 놓아줄게']))
+    elif is_love:
+        lines.append(rng.choice([f'사랑해 영원히',f'너와 함께라면 어디든',f'우리의 이야기는 계속돼']))
+    else:
+        lines.append(rng.choice([f'우리는 할 수 있어',f'빛나는 내일을 향해',f'이건 끝이 아닌 시작이야']))
+    return '\n'.join(lines)
 
 @app.post("/generate_lyrics")
 def generate_lyrics(body: dict):
-    """AI 가사 생성 — Udio Write Lyrics API (1 credit, 텍스트만 반환, 음악 생성 없음)"""
-    if not APIFRAME_KEY:
-        return JSONResponse(status_code=500, content={
-            "ok": False, "error": "API key가 설정되지 않았습니다."
-        })
-
+    """AI 가사 생성 — Udio API 시도 → 실패 시 로컬 생성기 폴백"""
     topic = (body.get('topic') or '').strip()
     style = (body.get('style') or 'pop ballad').strip()
-
     if not topic:
-        return JSONResponse(status_code=400, content={
-            "ok": False, "error": "주제/분위기를 입력해 주세요."
-        })
-
-    # 한국어 가사 요청 프롬프트 구성
-    lyrics_prompt = f"Korean song lyrics about: {topic}. Style: {style}. Write in Korean (한국어). Include [Verse], [Chorus], [Bridge] structure tags."
-    if len(lyrics_prompt) > 2000:
-        lyrics_prompt = lyrics_prompt[:2000]
-
+        return JSONResponse(status_code=400, content={"ok": False, "error": "주제/분위기를 입력해 주세요."})
+    # 1차: Udio Lyrics API (1 credit)
+    api_tried = False
+    api_error = ''
+    if APIFRAME_KEY:
+        api_tried = True
+        lyrics_prompt = f"Korean song lyrics about: {topic}. Style: {style}. Write in Korean (한국어). Include [Verse], [Chorus], [Bridge] structure tags."
+        if len(lyrics_prompt) > 2000:
+            lyrics_prompt = lyrics_prompt[:2000]
+        try:
+            resp = http_requests.post(
+                'https://api.apiframe.ai/v2/music/udio/lyrics',
+                headers={'X-API-Key': APIFRAME_KEY, 'Content-Type': 'application/json'},
+                json={"prompt": lyrics_prompt, "duration": 97},
+                timeout=30
+            )
+            if resp.ok:
+                result = resp.json()
+                lyr = ''
+                if isinstance(result.get('result'), dict):
+                    lyr = result['result'].get('lyrics', '')
+                if not lyr:
+                    lyr = result.get('lyrics') or result.get('text') or ''
+                if not lyr:
+                    job_id = result.get('id') or result.get('jobId') or result.get('task_id')
+                    if job_id:
+                        return JSONResponse(content={"ok": True, "job_id": job_id, "status": "PROCESSING"})
+                if lyr and len(lyr) > 20:
+                    return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio"})
+            api_error = f"HTTP {resp.status_code}: {resp.text[:200]}" if not resp.ok else "empty"
+        except Exception as e:
+            api_error = str(e)
+    # 2차: 로컬 가사 생성기 (0 credits, 즉시)
     try:
-        resp = http_requests.post(
-            'https://api.apiframe.ai/v2/music/udio/lyrics',
-            headers={
-                'X-API-Key': APIFRAME_KEY,
-                'Content-Type': 'application/json'
-            },
-            json={
-                "prompt": lyrics_prompt,
-                "duration": 97
-            },
-            timeout=30
-        )
-
-        if not resp.ok:
-            api_err = ""
-            try:
-                api_err = resp.text[:300]
-            except Exception:
-                pass
-            return JSONResponse(status_code=502, content={
-                "ok": False,
-                "error": f"가사 생성 API 호출 실패 (HTTP {resp.status_code})",
-                "hint": api_err or "apiframe.ai 서비스 상태를 확인하세요"
-            })
-
-        result = resp.json()
-
-        # 응답 구조: 즉시 반환 또는 비동기 job
-        # Case 1: 즉시 가사 반환
-        if result.get('result') and result['result'].get('lyrics'):
-            return JSONResponse(content={
-                "ok": True,
-                "lyrics": result['result']['lyrics']
-            })
-
-        # Case 2: 비동기 job → job_id 반환
-        job_id = result.get('id') or result.get('jobId') or result.get('task_id')
-        if job_id:
-            return JSONResponse(content={
-                "ok": True,
-                "job_id": job_id,
-                "status": "PROCESSING"
-            })
-
-        # Case 3: 예상치 못한 응답 — 가사 필드 탐색
-        lyrics_text = result.get('lyrics') or result.get('text') or ''
-        if lyrics_text:
-            return JSONResponse(content={
-                "ok": True,
-                "lyrics": lyrics_text
-            })
-
-        return JSONResponse(status_code=502, content={
-            "ok": False,
-            "error": "가사를 생성하지 못했습니다.",
-            "hint": str(result)[:300]
-        })
-
-    except http_requests.exceptions.RequestException as e:
-        return JSONResponse(status_code=502, content={
-            "ok": False,
-            "error": f"가사 생성 API 연결 실패: {str(e)}"
-        })
-
+        local_lyrics = _generate_korean_lyrics(topic, style)
+        return JSONResponse(content={"ok": True, "lyrics": local_lyrics, "source": "local"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"가사 생성 실패: {str(e)}", "api_error": api_error})
 
 @app.get("/lyrics_status/{job_id}")
 def lyrics_status(job_id: str):
     """AI 가사 생성 상태 조회 (비동기 job 폴링)"""
     if not APIFRAME_KEY:
-        return JSONResponse(status_code=500, content={
-            "ok": False, "error": "API 키 미설정"
-        })
+        return JSONResponse(status_code=500, content={"ok": False, "error": "API 키 미설정"})
     try:
         status_resp = http_requests.get(
             f'https://api.apiframe.ai/v2/jobs/{job_id}',
@@ -3570,45 +3655,21 @@ def lyrics_status(job_id: str):
             timeout=15
         )
         if not status_resp.ok:
-            return JSONResponse(status_code=502, content={
-                "ok": False,
-                "error": f"상태 조회 실패 (HTTP {status_resp.status_code})"
-            })
+            return JSONResponse(status_code=502, content={"ok": False, "error": f"상태 조회 실패 (HTTP {status_resp.status_code})"})
         status_data = status_resp.json()
     except http_requests.exceptions.RequestException as e:
-        return JSONResponse(status_code=502, content={
-            "ok": False,
-            "error": f"상태 조회 연결 실패: {str(e)}"
-        })
-
+        return JSONResponse(status_code=502, content={"ok": False, "error": f"상태 조회 연결 실패: {str(e)}"})
     job_status = (status_data.get('status') or '').upper()
-
     if job_status == 'COMPLETED':
         res = status_data.get('result', status_data)
         lyrics = res.get('lyrics') or res.get('text') or ''
         if lyrics:
-            return JSONResponse(content={
-                "ok": True,
-                "status": "COMPLETED",
-                "lyrics": lyrics
-            })
-        return JSONResponse(status_code=502, content={
-            "ok": False,
-            "error": "완료되었으나 가사를 찾을 수 없습니다.",
-            "hint": str(res)[:300]
-        })
+            return JSONResponse(content={"ok": True, "status": "COMPLETED", "lyrics": lyrics})
+        return JSONResponse(status_code=502, content={"ok": False, "error": "완료되었으나 가사를 찾을 수 없습니다."})
     elif job_status == 'FAILED':
-        return JSONResponse(content={
-            "ok": False,
-            "status": "FAILED",
-            "error": "가사 생성이 실패했습니다."
-        })
+        return JSONResponse(content={"ok": False, "status": "FAILED", "error": "가사 생성이 실패했습니다."})
     else:
-        return JSONResponse(content={
-            "ok": True,
-            "status": "PROCESSING",
-            "job_id": job_id
-        })
+        return JSONResponse(content={"ok": True, "status": "PROCESSING", "job_id": job_id})
 
 
 if __name__ == "__main__":
