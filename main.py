@@ -3598,83 +3598,147 @@ def _generate_korean_lyrics(topic: str, style: str) -> str:
         lines.append(rng.choice([f'우리는 할 수 있어',f'빛나는 내일을 향해',f'이건 끝이 아닌 시작이야']))
     return '\n'.join(lines)
 
+# ═══ cgo-439: AI 가사 생성 안정화 ═══
+# 기존 문제: Udio 가사 API는 비동기 job → job_id만 클라이언트로 넘기고 클라이언트가 폴링.
+#   · job FAILED / 상태조회 HTTP 오류 / 완료됐지만 가사 필드 위치가 다름 → 로컬 폴백 없이 오류·시간초과로 끝남
+# 수정: 서버가 직접 job을 끝까지 폴링(최대 ~40초) → 가사 필드를 재귀 탐색 → 어떤 실패든 로컬 생성기로 폴백.
+#   → 클라이언트는 항상 {"ok":true,"lyrics":...} 를 받음 (가사가 반드시 뜸)
+_LYRICS_KEYS = ('lyrics', 'lyric', 'text', 'content')
+
+def _extract_lyrics(obj, depth=0):
+    """apiframe 응답(JSON) 어디에 있든 가사 문자열을 찾아 반환"""
+    if depth > 6 or obj is None:
+        return ''
+    if isinstance(obj, str):
+        return ''
+    if isinstance(obj, list):
+        for it in obj:
+            v = _extract_lyrics(it, depth + 1)
+            if v:
+                return v
+        return ''
+    if isinstance(obj, dict):
+        for k in _LYRICS_KEYS:
+            v = obj.get(k)
+            if isinstance(v, str) and len(v.strip()) > 20:
+                return v.strip()
+            if isinstance(v, (list, dict)):
+                vv = _extract_lyrics(v, depth + 1)
+                if vv:
+                    return vv
+        for k in ('result', 'data', 'output', 'results', 'tracks', 'items'):
+            if k in obj:
+                v = _extract_lyrics(obj[k], depth + 1)
+                if v:
+                    return v
+    return ''
+
+def _job_id_of(obj):
+    if not isinstance(obj, dict):
+        return None
+    for k in ('id', 'jobId', 'job_id', 'task_id', 'taskId'):
+        if obj.get(k):
+            return str(obj[k])
+    d = obj.get('data') or obj.get('result')
+    if isinstance(d, dict):
+        for k in ('id', 'jobId', 'job_id', 'task_id', 'taskId'):
+            if d.get(k):
+                return str(d[k])
+    return None
+
+def _poll_apiframe_job(job_id: str, max_wait: float = 40.0, interval: float = 2.5):
+    """apiframe job 상태를 서버에서 직접 폴링. 반환: (lyrics or '', 오류설명)"""
+    deadline = time.time() + max_wait
+    last = ''
+    while time.time() < deadline:
+        try:
+            r = http_requests.get(
+                f'https://api.apiframe.ai/v2/jobs/{job_id}',
+                headers={'X-API-Key': APIFRAME_KEY},
+                timeout=15
+            )
+            if not r.ok:
+                last = f"job 조회 HTTP {r.status_code}: {r.text[:150]}"
+                if r.status_code in (401, 403, 404):
+                    return '', last
+            else:
+                d = r.json()
+                st = str(d.get('status') or '').upper()
+                if st in ('COMPLETED', 'SUCCEEDED', 'SUCCESS', 'DONE', 'FINISHED'):
+                    lyr = _extract_lyrics(d)
+                    return (lyr, '') if lyr else ('', f"완료됐지만 가사 없음: {str(d)[:200]}")
+                if st in ('FAILED', 'ERROR', 'CANCELLED', 'CANCELED'):
+                    return '', f"job 실패: {str(d.get('error') or d)[:200]}"
+                lyr = _extract_lyrics(d.get('result')) if isinstance(d, dict) else ''
+                if lyr:
+                    return lyr, ''
+                last = f"status={st or '?'}"
+        except Exception as e:
+            last = f"job 조회 예외: {e}"
+        time.sleep(interval)
+    return '', f"시간 초과 ({last})"
+
+def _local_lyrics_response(topic, style, api_error=''):
+    try:
+        return JSONResponse(content={"ok": True, "lyrics": _generate_korean_lyrics(topic, style),
+                                     "source": "local", "api_error": api_error})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"가사 생성 실패: {str(e)}", "api_error": api_error})
+
 @app.post("/generate_lyrics")
 def generate_lyrics(body: dict):
-    """AI 가사 생성 — Udio API 시도 → 실패 시 로컬 생성기 폴백"""
+    """AI 가사 생성 — Udio 가사 API(서버에서 완료까지 대기) → 실패 시 로컬 생성기 폴백. 항상 가사를 돌려줌"""
     topic = (body.get('topic') or '').strip()
     style = (body.get('style') or 'pop ballad').strip()
     if not topic:
         return JSONResponse(status_code=400, content={"ok": False, "error": "주제/분위기를 입력해 주세요."})
-    # 1차: Udio Lyrics API (1 credit)
-    api_tried = False
+    if body.get('local_only') or not APIFRAME_KEY:
+        return _local_lyrics_response(topic, style, '' if APIFRAME_KEY else 'API 키 미설정')
     api_error = ''
-    if APIFRAME_KEY:
-        api_tried = True
-        lyrics_prompt = f"Korean song lyrics about: {topic}. Style: {style}. Write in Korean (한국어). Include [Verse], [Chorus], [Bridge] structure tags."
-        if len(lyrics_prompt) > 2000:
-            lyrics_prompt = lyrics_prompt[:2000]
-        try:
-            resp = http_requests.post(
-                'https://api.apiframe.ai/v2/music/udio/lyrics',
-                headers={'X-API-Key': APIFRAME_KEY, 'Content-Type': 'application/json'},
-                json={"prompt": lyrics_prompt, "duration": 97},
-                timeout=30
-            )
-            if resp.ok:
-                result = resp.json()
-                lyr = ''
-                if isinstance(result.get('result'), dict):
-                    lyr = result['result'].get('lyrics', '')
-                if not lyr:
-                    lyr = result.get('lyrics') or result.get('text') or ''
-                if not lyr:
-                    job_id = result.get('id') or result.get('jobId') or result.get('task_id')
-                    if job_id:
-                        return JSONResponse(content={"ok": True, "job_id": job_id, "status": "PROCESSING"})
-                if lyr and len(lyr) > 20:
-                    return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio"})
-            api_error = f"HTTP {resp.status_code}: {resp.text[:200]}" if not resp.ok else "empty"
-        except Exception as e:
-            api_error = str(e)
-    # 2차: 로컬 가사 생성기 (0 credits, 즉시)
+    lyrics_prompt = (f"Korean song lyrics about: {topic}. Style: {style}. "
+                     f"Write in Korean (한국어). Include [Verse], [Chorus], [Bridge] structure tags.")[:2000]
     try:
-        local_lyrics = _generate_korean_lyrics(topic, style)
-        return JSONResponse(content={"ok": True, "lyrics": local_lyrics, "source": "local"})
+        resp = http_requests.post(
+            'https://api.apiframe.ai/v2/music/udio/lyrics',
+            headers={'X-API-Key': APIFRAME_KEY, 'Content-Type': 'application/json'},
+            json={"prompt": lyrics_prompt, "duration": 97},
+            timeout=30
+        )
+        if resp.ok:
+            result = resp.json()
+            lyr = _extract_lyrics(result)
+            if not lyr:
+                job_id = _job_id_of(result)
+                if job_id:
+                    lyr, api_error = _poll_apiframe_job(job_id)
+                else:
+                    api_error = f"job ID 없음: {str(result)[:200]}"
+            if lyr:
+                return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio"})
+        else:
+            api_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
     except Exception as e:
-        return JSONResponse(status_code=500, content={"ok": False, "error": f"가사 생성 실패: {str(e)}", "api_error": api_error})
+        api_error = f"API 연결 예외: {e}"
+    print(f"[generate_lyrics] Udio 실패 → 로컬 폴백: {api_error}", flush=True)
+    return _local_lyrics_response(topic, style, api_error)
 
 @app.get("/lyrics_status/{job_id}")
-def lyrics_status(job_id: str):
-    """AI 가사 생성 상태 조회 (비동기 job 폴링)"""
+def lyrics_status(job_id: str, topic: str = '', style: str = 'pop ballad'):
+    """(구버전 클라이언트 호환) 가사 job 상태 조회 — 실패 시 topic이 있으면 로컬 가사로 폴백"""
     if not APIFRAME_KEY:
-        return JSONResponse(status_code=500, content={"ok": False, "error": "API 키 미설정"})
-    try:
-        status_resp = http_requests.get(
-            f'https://api.apiframe.ai/v2/jobs/{job_id}',
-            headers={'X-API-Key': APIFRAME_KEY},
-            timeout=15
-        )
-        if not status_resp.ok:
-            return JSONResponse(status_code=502, content={"ok": False, "error": f"상태 조회 실패 (HTTP {status_resp.status_code})"})
-        status_data = status_resp.json()
-    except http_requests.exceptions.RequestException as e:
-        return JSONResponse(status_code=502, content={"ok": False, "error": f"상태 조회 연결 실패: {str(e)}"})
-    job_status = (status_data.get('status') or '').upper()
-    if job_status == 'COMPLETED':
-        res = status_data.get('result', status_data)
-        lyrics = res.get('lyrics') or res.get('text') or ''
-        if lyrics:
-            return JSONResponse(content={"ok": True, "status": "COMPLETED", "lyrics": lyrics})
-        return JSONResponse(status_code=502, content={"ok": False, "error": "완료되었으나 가사를 찾을 수 없습니다."})
-    elif job_status == 'FAILED':
-        return JSONResponse(content={"ok": False, "status": "FAILED", "error": "가사 생성이 실패했습니다."})
-    else:
+        return _local_lyrics_response(topic, style, 'API 키 미설정') if topic else \
+            JSONResponse(content={"ok": False, "status": "FAILED", "error": "API 키 미설정"})
+    lyr, err = _poll_apiframe_job(job_id, max_wait=8.0, interval=2.0)
+    if lyr:
+        return JSONResponse(content={"ok": True, "status": "COMPLETED", "lyrics": lyr})
+    if err.startswith('시간 초과'):
         return JSONResponse(content={"ok": True, "status": "PROCESSING", "job_id": job_id})
+    if topic:
+        r = _generate_korean_lyrics(topic, style)
+        return JSONResponse(content={"ok": True, "status": "COMPLETED", "lyrics": r, "source": "local", "api_error": err})
+    return JSONResponse(content={"ok": False, "status": "FAILED", "error": f"가사 생성 실패: {err}"})
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
 # ═══ CGO 보컬 믹서 API (cgo-390) ═══
 import random as _vmrandom
@@ -3750,3 +3814,9 @@ def voice_mix_custom(layers: dict):
             "layers": layer_weights,
         }
     return {"error": "no match"}
+
+
+# cgo-439: 실행 블록은 반드시 파일 맨 끝 (모든 라우트 등록 후 서버 시작)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
