@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-471"
-CGO_SRV_NOTE = "글 안 써도 곡 생성(471) · 가사를 Suno에서 받음(470) · 가사 언어 선택(469)"
+CGO_SRV_VER = "cgo-473"
+CGO_SRV_NOTE = "가사를 글쓰는AI에게(473) · 글 안 써도 곡 생성(471) · 가사 언어 선택(469)"
 
 
 def _cgo_key_src() -> str:
@@ -363,6 +363,7 @@ def version():
     """배포 확인 전용. 휴대폰 브라우저에서 열어 'ver'만 보면 된다."""
     return {"ver": CGO_SRV_VER, "note": CGO_SRV_NOTE,
             "key_src": _cgo_key_src(),
+            "lyrics_ai": (CGO_LLM_MODEL if CGO_LLM_KEY else "꺼짐 — CGO_LLM_KEY 미설정"),
             "started": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(_CGO_BOOT_TS)) + " UTC",
             "uptime_min": round((time.time() - _CGO_BOOT_TS) / 60, 1)}
 
@@ -3886,8 +3887,67 @@ def _suno_lyrics_once(prompt_text: str):
     return '', last or 'suno-lyrics 호출 실패'
 
 
+# ── cgo-473: 가사는 '글 쓰는 AI'에게 받는다 ─────────────────────────
+# 가사는 글인데 그동안 음악 만드는 기계(Udio)의 GPU 대기열 뒤에 줄을 섰다.
+# 그래서 "No available capacity"가 상습적으로 떴고, 될 때까지 몇 번씩 눌러야 했다.
+# 글 쓰는 AI는 2~4초면 답하고, 20개 언어를 제대로 쓰고, 한 곡에 1원이 안 든다.
+#
+# 특정 회사에 묶이지 않게 만들었다. 레일웨이 Variables에 아래 셋만 넣으면 된다:
+#   CGO_LLM_KEY   : 그 회사에서 받은 열쇠            (이것만 넣으면 켜진다)
+#   CGO_LLM_URL   : 주소 (안 넣으면 Gemini 기본값)
+#   CGO_LLM_MODEL : 모델 이름 (안 넣으면 기본값)
+# OpenAI·Gemini·Groq·DeepSeek 등 'chat/completions' 방식이면 그대로 통한다.
+CGO_LLM_KEY = os.environ.get('CGO_LLM_KEY', '').strip()
+CGO_LLM_URL = os.environ.get(
+    'CGO_LLM_URL',
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions').strip()
+CGO_LLM_MODEL = os.environ.get('CGO_LLM_MODEL', 'gemini-3.8-flash').strip()
+
+
+def _llm_lyrics(topic: str, style: str, lang: str):
+    """글 쓰는 AI에게 가사를 받는다 → (가사, 오류설명)"""
+    if not CGO_LLM_KEY:
+        return '', 'LLM 키 미설정'
+    nat = _LANG_NATIVE.get(lang, lang)
+    system = (
+        "You are a professional lyricist who writes for world-class vocalists. "
+        f"Write the lyrics entirely in {lang} ({nat}). Every line must be in {lang}.\n"
+        "Rules:\n"
+        "- Use [Verse], [Chorus], [Bridge] section tags.\n"
+        "- The chorus must repeat and be the emotional peak.\n"
+        "- Write lines that are singable: short, with natural stresses and breath pauses.\n"
+        "- Use concrete images, not abstract statements.\n"
+        "- NEVER copy the user's topic sentence into the lyrics; it is direction, not a line.\n"
+        "- Do not mention any real artist, brand or song title.\n"
+        "- Output ONLY the lyrics. No title, no explanation, no quotes."
+    )
+    user = f"Theme/direction: {topic}\nMusical style: {style}\nLength: about 16-24 lines."
+    try:
+        r = http_requests.post(
+            CGO_LLM_URL,
+            headers={'Authorization': f'Bearer {CGO_LLM_KEY}',
+                     'Content-Type': 'application/json'},
+            json={"model": CGO_LLM_MODEL,
+                  "messages": [{"role": "system", "content": system},
+                               {"role": "user", "content": user}],
+                  "temperature": 1.0, "max_tokens": 1200},
+            timeout=45)
+    except Exception as e:
+        return '', f"LLM 연결 예외: {e}"
+    if not r.ok:
+        return '', f"LLM HTTP {r.status_code}: {r.text[:200]}"
+    try:
+        d = r.json()
+        txt = (d['choices'][0]['message']['content'] or '').strip()
+    except Exception as e:
+        return '', f"LLM 응답 해석 실패: {e} / {r.text[:150]}"
+    if len(txt) < 30:
+        return '', f"LLM 가사가 너무 짧음: {txt[:80]}"
+    return txt, ''
+
+
 def _udio_once(prompt_text: str):
-    """Udio 가사 API 1회 시도 → (가사, 오류설명). cgo-470부터는 예비 통로."""
+    """Udio 가사 API 1회 시도 → (가사, 오류설명). cgo-473부터는 예비 통로."""
     try:
         resp = http_requests.post(
             'https://api.apiframe.ai/v2/music/udio/lyrics',
@@ -3910,7 +3970,7 @@ def _udio_once(prompt_text: str):
 
 @app.post("/generate_lyrics")
 def generate_lyrics(body: dict):
-    """AI 가사 생성 — Suno(최대 3회) → 예비로 Udio → 비상 가사. 항상 가사를 돌려준다."""
+    """AI 가사 생성 — 글 쓰는 AI → 예비로 Udio → 비상 가사. 항상 가사를 돌려준다."""
     topic = (body.get('topic') or '').strip()
     style = (body.get('style') or 'pop ballad').strip()
     # cgo-471: 글을 안 써도 막지 않는다. 고른 분위기(style)만으로도 가사를 만든다.
@@ -3933,32 +3993,24 @@ def generate_lyrics(body: dict):
     api_error = ''
     # cgo-470: Suno 먼저, 안 되면 Udio, 그래도 안 되면 비상 가사.
     # 앱이 120초에 끊으므로 95초 안에서 끝낸다 — 늦게 주느니 비상 가사라도 주는 게 낫다.
-    _deadline = time.time() + 95
-    WAITS = [0, 4, 9]          # 1회차 즉시, 2회차 4초 뒤, 3회차 9초 뒤
-    for attempt, wait in enumerate(WAITS, start=1):
-        if wait:
-            if time.time() + wait > _deadline:
-                break
-            time.sleep(wait)
-        lyr, api_error = _suno_lyrics_once(prompt_text)
-        if lyr:
-            return JSONResponse(content={"ok": True, "lyrics": lyr,
-                                         "source": "suno", "attempt": attempt})
-        print(f"[generate_lyrics] Suno {attempt}/{len(WAITS)}회차 실패: {api_error}", flush=True)
-        if not _is_retryable(api_error):
-            break              # 인증·크레딧 오류는 재시도해도 소용없다
-        if time.time() > _deadline:
-            break
+    # cgo-472: Suno 가사 창구는 '없다'. apiframe v2의 Suno는 /v2/music/generate 하나뿐이고
+    # 그것은 곡을 통째로 만드는 창구다. 가사만 받는 길은 Udio 쪽에만 있다.
+    # cgo-470에서 Suno 가사를 먼저 부르게 했던 것은 매번 HTTP 400을 맞는 헛걸음이었다 — 걷어낸다.
+    #
+    # 재시도 횟수도 3회 → 1회로 줄인다. 요청 한 번마다 비용이 나가므로,
+    # 안 될 때 혼자 세 번 더 두드리는 것보다 사용자가 다시 누르게 하는 편이 낫다.
+    # cgo-473: ① 글 쓰는 AI → ② Udio(예비) → ③ 비상 가사
+    lyr, api_error = _llm_lyrics(topic, style, lang)
+    if lyr:
+        return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "ai"})
+    if api_error != 'LLM 키 미설정':
+        print(f"[generate_lyrics] 글쓰는AI 실패: {api_error}", flush=True)
 
-    # 예비 통로 — Udio
-    if time.time() < _deadline:
-        lyr2, err2 = _udio_once(prompt_text)
-        if lyr2:
-            return JSONResponse(content={"ok": True, "lyrics": lyr2, "source": "udio"})
-        print(f"[generate_lyrics] 예비 Udio도 실패: {err2}", flush=True)
-        api_error = api_error or err2
-
-    print(f"[generate_lyrics] 최종 실패 → 비상 가사: {api_error}", flush=True)
+    lyr, err2 = _udio_once(prompt_text)
+    if lyr:
+        return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio"})
+    api_error = err2 or api_error
+    print(f"[generate_lyrics] Udio도 실패 → 비상 가사: {api_error}", flush=True)
     return _local_lyrics_response(topic, style, api_error, lang)   # cgo-469
 
 @app.get("/lyrics_status/{job_id}")
