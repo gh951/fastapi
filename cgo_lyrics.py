@@ -1787,6 +1787,51 @@ def kind_of(obj):
     return '물건'
 
 
+# ══ 움직이는 문형 — 이름표가 아니라 문장 ══════════════════════════
+#
+# 원래 문형 306개 중 동사가 든 것은 2개뿐이었다. 그래서 절이 이렇게 됐다.
+#     언덕 너머 정류장      ← 이름 붙이기
+#     발길 닿던 정류장      ← 이름 붙이기
+# 장면을 '말하는' 게 아니라 '가리키기만' 한다. 감정이 없다.
+#
+# 거꾸로 색인이 생긴 뒤로는 첫 글자에 초성을 맞출 필요가 없다.
+# 그래서 여기는 초성 칸을 나누지 않고 자연스러운 문장만 적는다.
+# 색인이 줄 안의 소리를 보고 알아서 제자리에 넣는다.
+
+동사문형 = {
+ '물건': [
+  '그 □을 다시 쥐어 봐', '□을 쥐었다 놓았어', '□ 하나를 두고 왔어', '□을 버리지 못했어',
+  '서랍에서 □을 꺼내', '□을 가만히 만져 봐', '□이 아직 손에 남아', '□을 품에 안고 있어',
+  '□ 위에 먼지가 앉아', '□을 돌려주지 못해', '□을 찾다가 멈췄어', '□이 눈에 밟혀',
+  '□을 보면 네가 떠올라', '□에 네 이름이 적혀', '□을 꼭 쥐고 울었어', '□ 하나로 버텼어',
+  '□을 두 손에 올려 봐', '□이 자꾸 손에 걸려', '□을 숨기고 웃었어', '낡은 □을 쓸어 봐',
+  '□ 곁에서 밤을 새워', '□ 하나가 다 말해 줘', '□을 놓지 못하겠어', '□이 조용히 식어가',
+  '먼지 쌓인 □을 닦아', '□을 다시 제자리에 둬', '□이 그대로 기다려', '□을 두고 돌아섰어',
+  '□을 꺼내 보다 접어', '□이 혼자 남겨졌어',
+ ],
+ '장소': [
+  '그 □에 혼자 서 있어', '□을 그냥 지나쳤어', '□으로 다시 돌아가', '□에서 너를 기다려',
+  '□을 떠나지 못해', '□까지 걸어가 봤어', '□에 네가 있을 것 같아', '□을 한참 바라봤어',
+  '□에서 발이 멈췄어', '□으로 가는 길을 잊어', '□에 눈이 내려앉아', '□이 그대로 남아 있어',
+  '□을 등지고 걸었어', '□에서 마지막을 봤어', '□으로 자꾸 발이 가', '□에 두고 온 게 있어',
+  '□을 몇 번이고 돌았어', '□이 점점 멀어져', '□에서 숨을 골랐어', '□을 찾아 헤맸어',
+  '아직 그 □에 서 있어', '□에 네 목소리가 남아', '□을 지나며 울었어', '□에서 돌아서지 못해',
+  '□이 나를 불러 세워', '□으로 걸음을 옮겨', '□에 불이 꺼졌어', '□을 눈에 담아 둬',
+  '□이 저물어 가', '□에서 혼자 울었어',
+ ],
+ '현상': [
+  '□이 조용히 내려와', '□이 깊어만 가', '□을 혼자 맞고 있어', '□이 나를 적셔',
+  '□이 식어 가', '□을 끝내 보내지 못해', '□이 번져 오고 있어', '□ 속을 걸어가',
+  '□이 잦아들고 있어', '□이 다시 찾아와', '□을 가만히 바라봐', '□이 온몸을 감싸',
+  '□이 지나가길 기다려', '□을 품고 잠들어', '□이 쏟아지고 있어', '□이 소리 없이 와',
+  '□을 견디고 있어', '□이 밤새 머물렀어', '□이 멀어져 가', '□을 기억해 둘게',
+  '□이 나를 지나쳐', '□ 아래 혼자 서 있어', '□이 스며들고 있어', '□을 끌어안고 울었어',
+  '□이 잦아들지 않아', '□이 그치지 않고 와', '□을 등 뒤에 두고', '□이 조금씩 꺼져가',
+  '□을 오래 바라봤어', '□이 다시 피어올라',
+ ],
+}
+
+
 # ══ 6. 거꾸로 색인 — 초성을 첫 글자에만 걸지 않는다 ══
 # 된소리는 같은 집안 — ㄱ칸에 '깊은'도 들어간다
 _FAM = {'ㄲ': 'ㄱ', 'ㄸ': 'ㄷ', 'ㅃ': 'ㅂ', 'ㅆ': 'ㅅ', 'ㅉ': 'ㅈ'}
@@ -1898,6 +1943,22 @@ def chosung_lottery(rng, n, pool=None):
 _EMO_IDX = {e: build(b) for e, b in EMO.items()}
 
 
+def _verb_idx(kind, obj):
+    """움직이는 문형 색인 — 초성 칸이 따로 없으니 줄 안의 소리로만 자리를 정한다"""
+    out = {}
+    for p in 동사문형.get(kind, []):
+        if not paper_ok(obj, p) or not place_ok(obj, p):
+            continue
+        plain = fill(p, obj)
+        for ch, (g, n) in marks(plain).items():
+            if ch in 약한머리:
+                g = 글자
+            if g == 글자 and n < (1 if ch in 약한머리 else 2):
+                continue
+            out.setdefault(ch, {}).setdefault(g, []).append(p)
+    return out
+
+
 def _pat_idx(pat, obj):
     """문형도 같은 방식으로 거꾸로 색인한다.
        '서랍 속 □이야' 는 ㅅ칸(머리)이면서 ㄹ칸(랍)이다 — ㄹ에 억지 외래어가 필요없다."""
@@ -1916,12 +1977,13 @@ def _pat_idx(pat, obj):
     return out
 
 
-def make(obj, emotion='추억', seed=None):
+def make(obj, emotion='추억', seed=None, 후렴사물=False):
     rng = random.Random(seed)
     kind = kind_of(obj)
     pat = KIND[kind]
     emo = _EMO_IDX.get(emotion) or _EMO_IDX['추억']
     pidx = _pat_idx(pat, obj)
+    vidx = _verb_idx(kind, obj)
 
     # 양쪽 창고에 다 있는 초성만 쓴다
     pool = [c for c in 무게 if c in emo and c in pidx]
@@ -1931,9 +1993,14 @@ def make(obj, emotion='추억', seed=None):
     pattern, hook = picks[:4], picks[4]
     used_p, used_e = set(), set()
 
-    def 사물줄(c, 맺기=False):
-        p, _ = draw(pidx, c, rng, used_p, 맺기=맺기, obj=obj)
-        return fill(p, obj) if p else None
+    def 사물줄(c, 맺기=False, 동사먼저=True):
+        """움직이는 문형을 먼저 쓴다 — 이름표만 나열하면 감정이 안 실린다"""
+        순서 = (vidx, pidx) if (동사먼저 and rng.random() < 0.75) else (pidx, vidx)
+        for src in 순서:
+            p, _ = draw(src, c, rng, used_p, 맺기=맺기, obj=obj)
+            if p:
+                return fill(p, obj)
+        return None
 
     def 감정줄(c, moods=('기본', '영탄', '연결', '의문', '양보'), 맺기=False):
         l, _ = draw(emo, c, rng, used_e, 맺기=맺기)
@@ -1965,13 +2032,14 @@ def make(obj, emotion='추억', seed=None):
         last = len(chs) - 1
         for i, c in enumerate(chs):
             m = (i == last)                      # 마지막 줄은 맺는 줄로
-            l = 사물줄(c, m) if i % 2 == 0 else 감정줄(c, 맺기=m)
+            l = 사물줄(c, m) if i == 0 else 감정줄(c, 맺기=m)
             out.append(l or 감정줄(c, 맺기=m) or 사물줄(c, m) or
                        감정줄(c) or 사물줄(c) or '')
         return 닫기(out)
 
     v1 = 절(pattern)
-    ch = [사물줄(hook) or 감정줄(hook)] + [감정줄(hook, ('영탄', '기본', '의문')) for _ in range(2)]
+    ch = ([사물줄(hook) or 감정줄(hook)] if 후렴사물 else [감정줄(hook, ('기본', '영탄'))])
+    ch += [감정줄(hook, ('영탄', '기본', '의문')) for _ in range(2)]
     ch.append(감정줄(hook, ('영탄', '기본', '의문'), 맺기=True) or 감정줄(hook, ('영탄', '기본')))
     ch = [x for x in ch if x and not _is_open(x)]          # 후렴에는 열린 줄을 쓰지 않는다
     while len(ch) < 4:
@@ -1993,7 +2061,7 @@ def make(obj, emotion='추억', seed=None):
 
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
 
-ENGINE = 'cgo-lotto-4'
+ENGINE = 'cgo-lotto-5'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
