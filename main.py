@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-478"
-CGO_SRV_NOTE = "수노 스타일 압축(478) · 가사 주문 짧게(477) · 실패 이유를 화면에(476)"
+CGO_SRV_VER = "cgo-479"
+CGO_SRV_NOTE = "붐비면 옆 모델로(479) · 수노 스타일 압축(478) · 가사 주문 짧게(477)"
 
 
 def _cgo_key_src() -> str:
@@ -363,7 +363,7 @@ def version():
     """배포 확인 전용. 휴대폰 브라우저에서 열어 'ver'만 보면 된다."""
     return {"ver": CGO_SRV_VER, "note": CGO_SRV_NOTE,
             "key_src": _cgo_key_src(),
-            "lyrics_ai": (CGO_LLM_MODEL if CGO_LLM_KEY else "꺼짐 — CGO_LLM_KEY 미설정"),
+            "lyrics_ai": (" → ".join(CGO_LLM_MODELS) if CGO_LLM_KEY else "꺼짐 — CGO_LLM_KEY 미설정"),
             "started": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(_CGO_BOOT_TS)) + " UTC",
             "uptime_min": round((time.time() - _CGO_BOOT_TS) / 60, 1)}
 
@@ -3911,6 +3911,14 @@ CGO_LLM_URL = os.environ.get(
     'CGO_LLM_URL',
     'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions').strip()
 CGO_LLM_MODEL = os.environ.get('CGO_LLM_MODEL', 'gemini-3.8-flash').strip()
+# cgo-479: 가장 최신 모델은 전 세계가 몰려서 503(붐빔)이 자주 난다.
+# 붐비면 옆 모델로 갈아탄다. 가사는 가벼운 모델로도 충분히 잘 쓴다.
+# CGO_LLM_MODELS 에 쉼표로 적어 두면 그 순서를 따른다.
+CGO_LLM_MODELS = [x.strip() for x in os.environ.get(
+    'CGO_LLM_MODELS',
+    f'{CGO_LLM_MODEL},gemini-3.7-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite'
+).split(',') if x.strip()]
+_MODEL_REST = {}        # 붐비는 모델은 잠시 쉬게 둔다 {모델: 언제까지}
 
 
 def _clean_lyrics(txt: str) -> str:
@@ -3969,22 +3977,47 @@ def _llm_lyrics(topic: str, style: str, lang: str):
                          {"role": "user", "content": user}],
             "temperature": 1.0, "max_tokens": 4000,
             "reasoning_effort": "low"}
-    for _try in (1, 2):
-        try:
-            r = http_requests.post(
-                CGO_LLM_URL,
-                headers={'Authorization': f'Bearer {CGO_LLM_KEY}',
-                         'Content-Type': 'application/json'},
-                json=body, timeout=60)
-        except Exception as e:
-            return '', f"LLM 연결 예외: {e}"
-        # reasoning_effort를 모르는 곳이면 그 항목만 빼고 한 번 더
-        if r.status_code == 400 and 'reasoning' in r.text.lower() and _try == 1:
-            body.pop('reasoning_effort', None)
+    now = time.time()
+    last_err = ''
+    r = None
+    for model in CGO_LLM_MODELS:
+        if _MODEL_REST.get(model, 0) > now:
+            continue                                   # 아직 쉬는 중인 모델
+        body["model"] = model
+        for _try in (1, 2):
+            try:
+                r = http_requests.post(
+                    CGO_LLM_URL,
+                    headers={'Authorization': f'Bearer {CGO_LLM_KEY}',
+                             'Content-Type': 'application/json'},
+                    json=body, timeout=60)
+            except Exception as e:
+                last_err = f"LLM 연결 예외: {e}"
+                r = None
+                break
+            # reasoning_effort를 모르는 곳이면 그 항목만 빼고 한 번 더
+            if r.status_code == 400 and 'reasoning' in r.text.lower() and _try == 1:
+                body.pop('reasoning_effort', None)
+                continue
+            break
+        if r is None:
             continue
-        break
-    if not r.ok:
-        return '', f"LLM HTTP {r.status_code}: {r.text[:200]}"
+        if r.ok:
+            break
+        last_err = f"LLM HTTP {r.status_code}: {r.text[:200]}"
+        if r.status_code in (503, 429, 500, 502, 504):
+            _MODEL_REST[model] = time.time() + 60       # 붐빔 — 1분 쉬게 두고 옆 모델로
+            print(f"[LLM] {model} 붐빔({r.status_code}) → 다음 모델", flush=True)
+            continue
+        if r.status_code in (400, 404):
+            _MODEL_REST[model] = time.time() + 3600     # 이 열쇠로는 못 쓰는 모델
+            print(f"[LLM] {model} 사용 불가({r.status_code}) → 다음 모델", flush=True)
+            continue
+        break                                           # 인증 오류 등은 갈아타도 소용없다
+    if r is None or not r.ok:
+        return '', last_err or 'LLM 호출 실패'
+    if body["model"] != CGO_LLM_MODELS[0]:
+        print(f"[LLM] {body['model']} 로 가사 생성", flush=True)
     try:
         d = r.json()
         ch = d['choices'][0]
