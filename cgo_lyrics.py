@@ -2007,10 +2007,11 @@ def make(obj, emotion='추억', seed=None, 후렴사물=False):
 
     # 양쪽 창고에 다 있는 초성만 쓴다
     pool = [c for c in 무게 if c in emo and c in pidx]
-    picks = chosung_lottery(rng, 5, pool)
-    if len(picks) < 5:
-        picks = (picks * 5)[:5]
-    pattern, hook = picks[:4], picks[4]
+    n = max(3, min(int(초성수), 8))
+    picks = chosung_lottery(rng, n + 1, pool)
+    if len(picks) < n + 1:
+        picks = (picks * (n + 1))[:n + 1]
+    pattern, hook = picks[:n], picks[n]
     used_p, used_e = set(), set()
 
     def 사물줄(c, 맺기=False, 동사먼저=True):
@@ -2094,7 +2095,9 @@ def make(obj, emotion='추억', seed=None, 후렴사물=False):
 }
 
 
-def make_long(obj, emotion='추억', seed=None):
+def make_long(obj, emotion='추억', seed=None, 초성수=4):
+    """초성수 = 한 절의 줄 수. 4면 사물 1 + 마음 3, 6이면 사물 1 + 마음 5.
+       1·2·3절이 같은 초성 차례를 따르므로 절이 길어지면 틀도 그만큼 길어진다."""
     rng = random.Random(seed)
     arc = 감정길.get(emotion, [emotion] * 3)
     kind = kind_of(obj)
@@ -2106,10 +2109,11 @@ def make_long(obj, emotion='추억', seed=None):
 
     # 세 감정 모두에 있는 초성만 쓴다 — 1·2·3절이 같은 틀을 따라야 하므로
     pool = [c for c in 무게 if all(c in d for d in idxs) and (c in pidx or c in vidx)]
-    picks = chosung_lottery(rng, 5, pool)
-    if len(picks) < 5:
-        picks = (picks * 5)[:5]
-    pattern, hook = picks[:4], picks[4]
+    n = max(3, min(int(초성수), 8))
+    picks = chosung_lottery(rng, n + 1, pool)
+    if len(picks) < n + 1:
+        picks = (picks * (n + 1))[:n + 1]
+    pattern, hook = picks[:n], picks[n]
     used_p, used_e = set(), set()
 
     def 사물줄(c, 맺기=False):
@@ -2135,8 +2139,9 @@ def make_long(obj, emotion='추억', seed=None):
     def 절(d, 여백끝):
         """사물 한 줄 + 마음 세 줄. 끝줄은 여백으로 두어 후렴에 넘긴다."""
         out = [사물줄(pattern[0])]
+        끝자리 = len(pattern) - 1
         for i, c in enumerate(pattern[1:], 1):
-            끝 = (i == 3)
+            끝 = (i == 끝자리)
             out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=(끝 and 여백끝)))
         out = [x for x in out if x]
         return out if 여백끝 else 닫기(out)
@@ -2163,7 +2168,7 @@ def make_long(obj, emotion='추억', seed=None):
 
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
 
-ENGINE = 'cgo-lotto-6'
+ENGINE = 'cgo-lotto-7'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
@@ -2229,11 +2234,11 @@ def pick(topic='', seed=None):
     return obj, emo
 
 
-def lyrics(topic='', style='', seed=None, 긴곡=True):
+def lyrics(topic='', style='', seed=None, 긴곡=True, 초성수=5):
     """서버 입구 — 수노에 그대로 넣을 수 있는 한국어 가사를 돌려준다.
     긴곡=True 면 세 마음을 하나로 묶은 26줄짜리, False 면 18줄짜리."""
     obj, emo = pick(topic, seed)
-    s = (make_long if 긴곡 else make)(obj, emo, seed=seed)
+    s = make_long(obj, emo, seed=seed, 초성수=초성수) if 긴곡 else make(obj, emo, seed=seed)
     out = []
     for tag, ls in s['sections']:
         if not ls:
@@ -2242,11 +2247,11 @@ def lyrics(topic='', style='', seed=None, 긴곡=True):
     return '\n\n'.join(out)
 
 
-def detail(topic='', style='', seed=None, 긴곡=True):
+def detail(topic='', style='', seed=None, 긴곡=True, 초성수=5):
     """가사 + 어떻게 뽑았는지 — /lyrics-test 로 들여다볼 때 쓴다"""
     obj, emo = pick(topic, seed)
-    s = (make_long if 긴곡 else make)(obj, emo, seed=seed)
-    t = lyrics(topic, style, seed, 긴곡)
+    s = make_long(obj, emo, seed=seed, 초성수=초성수) if 긴곡 else make(obj, emo, seed=seed)
+    t = lyrics(topic, style, seed, 긴곡, 초성수)
     return {'lyrics': t, 'obj': obj, 'emotion': emo, 'kind': s['kind'],
             'arc': ' → '.join(s.get('arc') or [emo]),
             'pattern': s['pattern'], 'hook': s['hook'],
