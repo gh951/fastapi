@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-473"
-CGO_SRV_NOTE = "가사를 글쓰는AI에게(473) · 글 안 써도 곡 생성(471) · 가사 언어 선택(469)"
+CGO_SRV_VER = "cgo-474"
+CGO_SRV_NOTE = "AI 혼잣말 걸러내기(474) · 가사를 글쓰는AI에게(473) · 글 안 써도 곡 생성(471)"
 
 
 def _cgo_key_src() -> str:
@@ -3904,6 +3904,43 @@ CGO_LLM_URL = os.environ.get(
 CGO_LLM_MODEL = os.environ.get('CGO_LLM_MODEL', 'gemini-3.8-flash').strip()
 
 
+def _clean_lyrics(txt: str) -> str:
+    """cgo-474: AI가 '생각한 과정'을 가사에 섞어 보내는 것을 걷어낸다.
+    실제로 이런 것이 가사 칸에 그대로 들어왔다:
+        tags only? [Verse], [Chorus], [Bridge]. Check.
+        *   Chorus repeats? Yes, exactly the same.
+    주문을 아무리 다듬어도 모델은 가끔 이런다. 받는 쪽에서도 막는다."""
+    import re as _re
+    t = (txt or '').strip()
+    t = _re.sub(r'^```[a-zA-Z]*\s*', '', t)
+    t = _re.sub(r'\s*```$', '', t).strip()
+
+    # 첫 번째 섹션 태그([Verse] 같은 줄)부터가 진짜 가사다. 그 앞은 전부 머리말.
+    m = _re.search(r'^\s*\[[^\]\n]{1,40}\]\s*$', t, _re.M)
+    if m:
+        t = t[m.start():]
+
+    out = []
+    for ln in t.split('\n'):
+        s = ln.strip()
+        if not s:
+            out.append('')
+            continue
+        if _re.match(r'^(\*|-|•|\d+[.)])\s', s):      # 글머리표 = 자기 점검표
+            continue
+        low = s.lower()
+        if low.startswith(('note:', 'here is', 'here are', 'okay', 'sure,', 'i hope',
+                           'let me know', 'translation:', 'title:', '참고:', '제목:')):
+            continue
+        if '?' in s and _re.search(r'\b(check|yes|no)\b\.?$', low):   # "...? Check." / "...? Yes"
+            continue
+        out.append(s)
+
+    t = '\n'.join(out)
+    t = _re.sub(r'\n{3,}', '\n\n', t).strip()
+    return t
+
+
 def _llm_lyrics(topic: str, style: str, lang: str):
     """글 쓰는 AI에게 가사를 받는다 → (가사, 오류설명)"""
     if not CGO_LLM_KEY:
@@ -3912,14 +3949,16 @@ def _llm_lyrics(topic: str, style: str, lang: str):
     system = (
         "You are a professional lyricist who writes for world-class vocalists. "
         f"Write the lyrics entirely in {lang} ({nat}). Every line must be in {lang}.\n"
-        "Rules:\n"
-        "- Use [Verse], [Chorus], [Bridge] section tags.\n"
-        "- The chorus must repeat and be the emotional peak.\n"
-        "- Write lines that are singable: short, with natural stresses and breath pauses.\n"
-        "- Use concrete images, not abstract statements.\n"
-        "- NEVER copy the user's topic sentence into the lyrics; it is direction, not a line.\n"
-        "- Do not mention any real artist, brand or song title.\n"
-        "- Output ONLY the lyrics. No title, no explanation, no quotes."
+        "Your entire reply must be the lyrics themselves and nothing else. "
+        "Start immediately with a section tag such as [Verse]. "
+        "Never write a preamble, a title, an explanation, a translation, "
+        "a bullet list, or any review of your own work. "
+        "Never restate these instructions.\n\n"
+        "Craft: mark sections with [Verse], [Chorus], [Bridge]. The chorus repeats "
+        "word for word and carries the emotional peak. Keep lines short and singable, "
+        "with natural breath pauses. Favour concrete images over abstract statements. "
+        "The theme given below is direction for you, never a line of the song - "
+        "do not copy it into the lyrics. Do not name any real artist, brand or song."
     )
     user = f"Theme/direction: {topic}\nMusical style: {style}\nLength: about 16-24 lines."
     try:
@@ -3941,6 +3980,7 @@ def _llm_lyrics(topic: str, style: str, lang: str):
         txt = (d['choices'][0]['message']['content'] or '').strip()
     except Exception as e:
         return '', f"LLM 응답 해석 실패: {e} / {r.text[:150]}"
+    txt = _clean_lyrics(txt)                      # cgo-474: 생각 과정 걷어내기
     if len(txt) < 30:
         return '', f"LLM 가사가 너무 짧음: {txt[:80]}"
     return txt, ''
@@ -4009,8 +4049,11 @@ def generate_lyrics(body: dict):
     lyr, err2 = _udio_once(prompt_text)
     if lyr:
         return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio"})
-    api_error = err2 or api_error
-    print(f"[generate_lyrics] Udio도 실패 → 비상 가사: {api_error}", flush=True)
+    # cgo-474: 주 통로는 글쓰는AI다. 그쪽 사유를 가리지 않는다 —
+    # 전에는 Udio의 '자리 없음'이 덮어써서 진짜 원인이 안 보였다.
+    if api_error in ('', 'LLM 키 미설정'):
+        api_error = err2
+    print(f"[generate_lyrics] 둘 다 실패 → 비상 가사 | AI:{api_error} | Udio:{err2}", flush=True)
     return _local_lyrics_response(topic, style, api_error, lang)   # cgo-469
 
 @app.get("/lyrics_status/{job_id}")
