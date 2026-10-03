@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-475"
-CGO_SRV_NOTE = "생각 한도 확보(475) · 혼잣말 걸러내기(474) · 가사를 글쓰는AI에게(473)"
+CGO_SRV_VER = "cgo-478"
+CGO_SRV_NOTE = "수노 스타일 압축(478) · 가사 주문 짧게(477) · 실패 이유를 화면에(476)"
 
 
 def _cgo_key_src() -> str:
@@ -3197,6 +3197,10 @@ def vvip_generate(req: VvipReq):
         suno_style = f"{vocal_tag}{timbre_short}, {_style_for_suno}, {req.bpm} BPM, key of {req.key}"
     else:
         suno_style = f"{vocal_tag}{req.style}, {req.bpm} BPM, key of {req.key}"
+    _before478 = len(suno_style)
+    suno_style = _compact_style(suno_style)                 # cgo-478
+    if _before478 != len(suno_style):
+        print(f"[vvip] 스타일 압축 {_before478}자 → {len(suno_style)}자", flush=True)
 
     # ═══ cgo-445: 랩 구간 삽입 ═══
     # 래퍼 음색만 지정해서는 Suno가 랩을 넣지 않는다. 가사에 [Rap] 구조 태그가 있어야 한다.
@@ -3814,6 +3818,11 @@ def _why(api_error: str) -> str:
         return '요청이 많아 잠시 제한되었습니다 — 잠시 후 다시 시도해 주세요'
     if '시간 초과' in (api_error or '') or 'timeout' in m:
         return 'AI 가사 생성이 오래 걸려 기본 가사로 만들었습니다'
+    # cgo-476: 아는 경우가 아니면 '연결하지 못했습니다'로 뭉개지 말고
+    # 실제로 돌아온 말을 그대로 보여준다. 로그를 뒤지지 않고도 원인을 안다.
+    raw = (api_error or '').strip()
+    if raw:
+        return 'AI 가사 실패 → ' + raw[:160]
     return 'AI 가사 서버에 연결하지 못했습니다'
 
 # ── cgo-470: 가사를 Suno에게 받는다 ────────────────────────────────
@@ -3946,21 +3955,12 @@ def _llm_lyrics(topic: str, style: str, lang: str):
     if not CGO_LLM_KEY:
         return '', 'LLM 키 미설정'
     nat = _LANG_NATIVE.get(lang, lang)
-    system = (
-        "You are a professional lyricist who writes for world-class vocalists. "
-        f"Write the lyrics entirely in {lang} ({nat}). Every line must be in {lang}.\n"
-        "Your entire reply must be the lyrics themselves and nothing else. "
-        "Start immediately with a section tag such as [Verse]. "
-        "Never write a preamble, a title, an explanation, a translation, "
-        "a bullet list, or any review of your own work. "
-        "Never restate these instructions.\n\n"
-        "Craft: mark sections with [Verse], [Chorus], [Bridge]. The chorus repeats "
-        "word for word and carries the emotional peak. Keep lines short and singable, "
-        "with natural breath pauses. Favour concrete images over abstract statements. "
-        "The theme given below is direction for you, never a line of the song - "
-        "do not copy it into the lyrics. Do not name any real artist, brand or song."
-    )
-    user = f"Theme/direction: {topic}\nMusical style: {style}\nLength: about 16-24 lines."
+    system = (f"You write song lyrics in {lang} ({nat}). "
+              "Reply with the lyrics only \u2014 no preamble, no notes, no lists, no review.")
+    user = (f"Theme (direction for you, never a line of the song): {topic}\n"
+            f"Style: {style}\n"
+            "Format: [Verse] / [Chorus] / [Bridge] tags, 16-24 short singable lines, "
+            "chorus repeats word for word.")
     # cgo-475: Gemini 3 계열은 '생각'을 끌 수 없고, 그 생각이 출력 글자 한도를 먹는다.
     # 한도를 1,200자로 잡아뒀더니 생각하다가 한도가 끝나 가사가 안 나왔다
     # (혼잣말만 나온 것도 이 때문). 한도를 넉넉히 주고 생각은 최소로 시킨다.
@@ -3997,6 +3997,39 @@ def _llm_lyrics(topic: str, style: str, lang: str):
     if len(txt) < 30:
         return '', f"LLM 가사가 너무 짧음: {txt[:80]}"
     return txt, ''
+
+
+def _compact_style(st: str, keep_tail: int = 2) -> str:
+    """cgo-478: 수노 스타일 문구를 '키워드 조합'으로 줄인다.
+    수노는 긴 문장보다 쉼표로 끊은 핵심 단어들을 훨씬 잘 알아듣는다.
+    그동안 우리 문구는 332자/13조각이었다 — 분위기 카드 하나가 영어 문구를
+    3개씩 달고 오면서 'Western melodic writing / international pop sensibility /
+    A-list Western production'처럼 같은 말이 세 번 들어가기도 했다.
+    맨 뒤 BPM·조성은 항상 남긴다(수노가 이 둘은 확실히 읽는다)."""
+    import re as _re
+    segs = [x.strip() for x in (st or '').split(',')]
+    segs = [x for x in segs if x]
+    if len(segs) <= keep_tail:
+        return st
+    head, tail = segs[:-keep_tail], segs[-keep_tail:]      # tail = BPM, key of X
+    kept, seen_words = [], set()
+    for seg in head:
+        low = seg.lower()
+        if any(low == k.lower() or low in k.lower() for k in kept):
+            continue                                        # 똑같거나 이미 포함된 말
+        words = set(_re.findall(r'[a-z]{4,}', low))
+        if words and len(words & seen_words) >= max(1, len(words) * 0.6):
+            continue                                        # 같은 뜻을 또 말하는 조각
+        kept.append(seg)
+        seen_words |= words
+        if len(kept) >= 9:
+            break
+    out = ', '.join(kept + tail)
+    if len(out) > 240:                                      # 그래도 길면 뒤에서 자른다
+        while len(', '.join(kept + tail)) > 240 and len(kept) > 3:
+            kept.pop()
+        out = ', '.join(kept + tail)
+    return out
 
 
 def _udio_once(prompt_text: str):
