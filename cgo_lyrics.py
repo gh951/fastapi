@@ -1739,6 +1739,54 @@ _종이 = {'가계부',
  '편지',
  '표'}
 _종이말 = ('한 장', '첫 장', '펼쳐둔', '접어둔', '구겨진', '고이 접은', '눌러 쓴', '첫 장에 적힌')
+빈자리문형 = {'물건': ['□을 꺼내 보다 접어',
+        '□을 보다 말았어',
+        '□을 쥐고 삼켰어',
+        '□ 하나에 묻어뒀어',
+        '□을 보다 덮었어',
+        '□을 꺼냈다 넣었어',
+        '□을 들었다 놓았어',
+        '□ 하나에 다 걸었어',
+        '□을 보다 돌아섰어',
+        '□을 두고 삼켰어',
+        '□ 하나로 버텼어',
+        '□을 쥐고 참았어',
+        '□을 보다 울었어',
+        '□ 하나에 매달렸어',
+        '□을 쥐다 놓쳤어',
+        '□을 보다 접었어'],
+ '장소': ['□ 앞에서 삼켰어',
+        '□ 앞에서 지웠어',
+        '□ 앞에서 멈췄어',
+        '□ 앞에서 접었어',
+        '□ 앞에서 무너졌어',
+        '□에서 돌아서다 멈춰',
+        '□에 두고 왔어',
+        '□을 보다 말았어',
+        '□에서 참다 울었어',
+        '□을 두고 삼켰어',
+        '□에서 흔들려',
+        '□ 앞에서 망설여',
+        '□을 지나다 멈췄어',
+        '□에 묻어뒀어',
+        '□에서 보다 말았어',
+        '□을 등지고 삼켰어'],
+ '현상': ['□ 속에 묻어뒀어',
+        '□ 속에서 삼켰어',
+        '□ 아래 두고 왔어',
+        '□을 보다 말았어',
+        '□ 속에서 무너졌어',
+        '□ 지나며 삼켰어',
+        '□ 아래 접었어',
+        '□ 속에서 흔들려',
+        '□을 견디다 울었어',
+        '□ 속에 지웠어',
+        '□ 아래 멈췄어',
+        '□을 보다 돌아섰어',
+        '□ 속에서 참았어',
+        '□ 아래 망설여',
+        '□을 맞다 접었어',
+        '□ 속에 다 걸었어']}
 _정확 = {
  '장소': {'고향','바다','골목','운동장','교실','마을','강','산','집','학교','역','공원',
           '도시','시골','섬','언덕','길','바닷가','해변','들판','논','밭','다리','정류장',
@@ -1756,6 +1804,10 @@ _포함 = {
 _종이 = {'편지','사진','쪽지','엽서','일기','일기장','성적표','졸업장','책','노트','공책',
          '그림','지도','표','티켓','악보','신문','달력','청첩장','명함','수첩','앨범',
          '교과서','문제집','연습장','부적','영수증','메모','가계부','앨범'}
+# 종이에만 쓰는 '꾸밈말' — 접어둔 반지 ✗ (반지가 접혀 있을 수는 없다)
+# 그러나 '동작'으로서의 접다는 막지 않는다 — 반지를 꺼내 보다 접어 ✓
+# 무엇을 접었는지 말하지 않으니 반지일 수도, 마음일 수도 있다.
+# 그 빈자리가 여백이다. 글자 그대로 따지면 시가 죽는다.
 _종이말 = ('한 장', '첫 장', '펼쳐둔', '접어둔', '구겨진', '고이 접은', '눌러 쓴', '첫 장에 적힌')
 
 # 골목·거리·어귀·길목·담장 은 '사람이 모여 사는 동네'에만 있다.
@@ -1949,6 +2001,18 @@ def chosung_lottery(rng, n, pool=None):
 _EMO_IDX = {e: build(b) for e, b in EMO.items()}
 
 
+_끝말들 = ('는데', '을게', '겠지', '리라', '습니다', '이야', '이네', '으리라',
+          '어', '아', '야', '네', '까', '지', '고', '해', '와', '가', '져', '라')
+
+
+def 끝말(l):
+    """줄의 맺음 소리 — 같은 소리가 세 줄 잇따르면 노래가 늘어진다"""
+    for k in _끝말들:
+        if l.endswith(k):
+            return k
+    return l[-1:]
+
+
 def 닫기(out):
     """열린 줄은 절 끝에 두지 않는다 — 끌고 갈 다음 줄이 없으면 허공에 뜬다.
        닫는 줄과 자리를 바꿔서 '열린 줄 → 닫는 줄' 순서를 만든다."""
@@ -1966,8 +2030,10 @@ def 닫기(out):
 def _verb_idx(kind, obj):
     """움직이는 문형 색인 — 초성 칸이 따로 없으니 줄 안의 소리로만 자리를 정한다"""
     out = {}
-    for p in 동사문형.get(kind, []):
-        if not paper_ok(obj, p) or not place_ok(obj, p):
+    빈 = 빈자리문형.get(kind, [])
+    for p in list(동사문형.get(kind, [])) + list(빈):
+        # 빈자리문형은 잠금을 받지 않는다 — 글자 그대로 읽는 문형이 아니다
+        if p not in 빈 and (not paper_ok(obj, p) or not place_ok(obj, p)):
             continue
         plain = fill(p, obj)
         for ch, (g, n) in marks(plain).items():
@@ -2124,17 +2190,29 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
                 return fill(p, obj)
         return None
 
-    def 감정줄(d, c, moods=('기본', '영탄', '연결', '의문', '양보'), 맺기=False, 여백=False):
-        l, _ = draw(d, c, rng, used_e, 맺기=맺기, 여백=여백)
-        if not l:
-            l, _ = draw(d, c, rng, used_e)
-        if not l:
-            return None
-        f = allforms(l)
-        for m in moods:
-            if m in f:
-                return f[m]
-        return l
+    def 감정줄(d, c, moods=('기본', '영탄', '연결', '의문', '양보'),
+             맺기=False, 여백=False, 피할끝=None):
+        """피할끝이 있으면 그 맺음 소리는 피해서 뽑는다 — 네/네/네 가 되면 늘어진다"""
+        버린것 = []
+        for _ in range(5):
+            l, _g = draw(d, c, rng, used_e, 맺기=맺기, 여백=여백)
+            if not l:
+                l, _g = draw(d, c, rng, used_e)
+            if not l:
+                break
+            f = allforms(l)
+            고른것 = l
+            for m in moods:
+                if m in f:
+                    고른것 = f[m]; break
+            if 피할끝 is None or 끝말(고른것) != 피할끝:
+                for x in 버린것:
+                    used_e.discard(x)          # 안 쓴 줄은 창고에 돌려둔다
+                return 고른것
+            버린것.append(l)
+        for x in 버린것[1:]:
+            used_e.discard(x)
+        return 고른것 if 버린것 else None
 
     def 절(d, 여백끝):
         """사물 한 줄 + 마음 세 줄. 끝줄은 여백으로 두어 후렴에 넘긴다."""
@@ -2142,13 +2220,18 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
         끝자리 = len(pattern) - 1
         for i, c in enumerate(pattern[1:], 1):
             끝 = (i == 끝자리)
-            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=(끝 and 여백끝)))
+            앞 = [x for x in out if x]
+            피 = 끝말(앞[-1]) if len(앞) >= 2 and 끝말(앞[-1]) == 끝말(앞[-2]) else None
+            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=(끝 and 여백끝), 피할끝=피))
         out = [x for x in out if x]
         return out if 여백끝 else 닫기(out)
 
     후렴 = [감정줄(mid, hook, ('기본', '영탄'))]
-    후렴 += [감정줄(mid, hook, ('영탄', '기본', '의문')) for _ in range(2)]
-    후렴.append(감정줄(mid, hook, ('영탄', '기본', '의문'), 맺기=True))
+    for k in range(3):
+        앞 = [x for x in 후렴 if x]
+        피 = 끝말(앞[-1]) if len(앞) >= 2 and 끝말(앞[-1]) == 끝말(앞[-2]) else None
+        후렴.append(감정줄(mid, hook, ('영탄', '기본', '의문'),
+                        맺기=(k == 2), 피할끝=피))
     후렴 = 닫기([x for x in 후렴 if x])
 
     v1 = 절(idxs[0], True)
@@ -2156,8 +2239,10 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
     v3 = 절(idxs[2], True)
     bpool = [c for c in pool if c not in pattern] or pool
     bc = chosung_lottery(rng, 2, bpool)
-    br = 닫기([x for x in [감정줄(idxs[2], bc[0], ('대조', '의지', '양보', '기본')),
-                          감정줄(idxs[2], bc[-1], ('대조', '의지', '기본'), 맺기=True)] if x])
+    b1 = 감정줄(idxs[2], bc[0], ('대조', '의지', '양보', '기본'))
+    b2 = 감정줄(idxs[2], bc[-1], ('대조', '의지', '기본'), 맺기=True,
+              피할끝=(끝말(b1) if b1 else None))
+    br = 닫기([x for x in (b1, b2) if x])
 
     return {'obj': obj, 'kind': kind, 'emotion': emotion, 'arc': arc,
             'pattern': pattern, 'hook': hook, 'long': True,
@@ -2168,7 +2253,7 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
 
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
 
-ENGINE = 'cgo-lotto-7'
+ENGINE = 'cgo-lotto-9'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
