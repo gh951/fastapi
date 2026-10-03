@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-474"
-CGO_SRV_NOTE = "AI 혼잣말 걸러내기(474) · 가사를 글쓰는AI에게(473) · 글 안 써도 곡 생성(471)"
+CGO_SRV_VER = "cgo-475"
+CGO_SRV_NOTE = "생각 한도 확보(475) · 혼잣말 걸러내기(474) · 가사를 글쓰는AI에게(473)"
 
 
 def _cgo_key_src() -> str:
@@ -3961,23 +3961,36 @@ def _llm_lyrics(topic: str, style: str, lang: str):
         "do not copy it into the lyrics. Do not name any real artist, brand or song."
     )
     user = f"Theme/direction: {topic}\nMusical style: {style}\nLength: about 16-24 lines."
-    try:
-        r = http_requests.post(
-            CGO_LLM_URL,
-            headers={'Authorization': f'Bearer {CGO_LLM_KEY}',
-                     'Content-Type': 'application/json'},
-            json={"model": CGO_LLM_MODEL,
-                  "messages": [{"role": "system", "content": system},
-                               {"role": "user", "content": user}],
-                  "temperature": 1.0, "max_tokens": 1200},
-            timeout=45)
-    except Exception as e:
-        return '', f"LLM 연결 예외: {e}"
+    # cgo-475: Gemini 3 계열은 '생각'을 끌 수 없고, 그 생각이 출력 글자 한도를 먹는다.
+    # 한도를 1,200자로 잡아뒀더니 생각하다가 한도가 끝나 가사가 안 나왔다
+    # (혼잣말만 나온 것도 이 때문). 한도를 넉넉히 주고 생각은 최소로 시킨다.
+    body = {"model": CGO_LLM_MODEL,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+            "temperature": 1.0, "max_tokens": 4000,
+            "reasoning_effort": "low"}
+    for _try in (1, 2):
+        try:
+            r = http_requests.post(
+                CGO_LLM_URL,
+                headers={'Authorization': f'Bearer {CGO_LLM_KEY}',
+                         'Content-Type': 'application/json'},
+                json=body, timeout=60)
+        except Exception as e:
+            return '', f"LLM 연결 예외: {e}"
+        # reasoning_effort를 모르는 곳이면 그 항목만 빼고 한 번 더
+        if r.status_code == 400 and 'reasoning' in r.text.lower() and _try == 1:
+            body.pop('reasoning_effort', None)
+            continue
+        break
     if not r.ok:
         return '', f"LLM HTTP {r.status_code}: {r.text[:200]}"
     try:
         d = r.json()
-        txt = (d['choices'][0]['message']['content'] or '').strip()
+        ch = d['choices'][0]
+        txt = (ch['message'].get('content') or '').strip()
+        if not txt and ch.get('finish_reason') == 'length':
+            return '', "LLM이 생각만 하다 글자 한도에 걸림 (max_tokens 부족)"
     except Exception as e:
         return '', f"LLM 응답 해석 실패: {e} / {r.text[:150]}"
     txt = _clean_lyrics(txt)                      # cgo-474: 생각 과정 걷어내기
