@@ -2073,11 +2073,16 @@ def make(obj, emotion='추억', seed=None, 후렴사물=False):
 
     # 양쪽 창고에 다 있는 초성만 쓴다
     pool = [c for c in 무게 if c in emo and c in pidx]
+    설정 = 결표.get(결) or 결표['발라드']
+    말투 = 설정['말투']
+    여백률 = 설정['여백']
     n = max(3, min(int(초성수), 8))
     picks = chosung_lottery(rng, n + 1, pool)
     if len(picks) < n + 1:
         picks = (picks * (n + 1))[:n + 1]
     pattern, hook = picks[:n], picks[n]
+    if 설정.get('한초성'):                 # 힙합 — 한 초성으로 절을 통째로 민다
+        pattern = [picks[0]] * n
     used_p, used_e = set(), set()
 
     def 사물줄(c, 맺기=False, 동사먼저=True):
@@ -2161,7 +2166,7 @@ def make(obj, emotion='추억', seed=None, 후렴사물=False):
 }
 
 
-def make_long(obj, emotion='추억', seed=None, 초성수=4):
+def make_long(obj, emotion='추억', seed=None, 초성수=4, 결='발라드'):
     """초성수 = 한 절의 줄 수. 4면 사물 1 + 마음 3, 6이면 사물 1 + 마음 5.
        1·2·3절이 같은 초성 차례를 따르므로 절이 길어지면 틀도 그만큼 길어진다."""
     rng = random.Random(seed)
@@ -2175,11 +2180,16 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
 
     # 세 감정 모두에 있는 초성만 쓴다 — 1·2·3절이 같은 틀을 따라야 하므로
     pool = [c for c in 무게 if all(c in d for d in idxs) and (c in pidx or c in vidx)]
+    설정 = 결표.get(결) or 결표['발라드']
+    말투 = 설정['말투']
+    여백률 = 설정['여백']
     n = max(3, min(int(초성수), 8))
     picks = chosung_lottery(rng, n + 1, pool)
     if len(picks) < n + 1:
         picks = (picks * (n + 1))[:n + 1]
     pattern, hook = picks[:n], picks[n]
+    if 설정.get('한초성'):                 # 힙합 — 한 초성으로 절을 통째로 민다
+        pattern = [picks[0]] * n
     used_p, used_e = set(), set()
 
     def 사물줄(c, 맺기=False):
@@ -2190,22 +2200,32 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
                 return fill(p, obj)
         return None
 
-    def 감정줄(d, c, moods=('기본', '영탄', '연결', '의문', '양보'),
-             맺기=False, 여백=False, 피할끝=None):
+    def 말투고르기(f, moods):
+        """줄이 취할 수 있는 말투 가운데 장르 표에 따라 하나를 뽑는다"""
+        표 = []
+        for m in f:
+            n = moods.get(m, 1) if isinstance(moods, dict) else (3 if m in moods else 0)
+            표 += [m] * n
+        return rng.choice(표) if 표 else '기본'
+
+    def 감정줄(d, c, moods=None, 맺기=False, 여백=False, 피할끝=None, 어절=None):
+        """어절이 주어지면 그 어절 수인 줄만 뽑는다 — 후렴의 가락을 맞추기 위해.
+        어미를 바꾸면 어절이 줄기도 한다('해내고 말 거야' 3 → '해내고 말리라' 2).
+        그래서 바꾼 뒤의 꼴로 센다."""
+        moods = moods if moods is not None else 말투
         """피할끝이 있으면 그 맺음 소리는 피해서 뽑는다 — 네/네/네 가 되면 늘어진다"""
         버린것 = []
-        for _ in range(5):
+        for _ in range(12 if 어절 else 5):
             l, _g = draw(d, c, rng, used_e, 맺기=맺기, 여백=여백)
             if not l:
                 l, _g = draw(d, c, rng, used_e)
             if not l:
                 break
             f = allforms(l)
-            고른것 = l
-            for m in moods:
-                if m in f:
-                    고른것 = f[m]; break
-            if 피할끝 is None or 끝말(고른것) != 피할끝:
+            고른것 = f.get(말투고르기(f, moods), l)
+            맞음 = (피할끝 is None or 끝말(고른것) != 피할끝) and \
+                   (어절 is None or len(고른것.split()) == 어절)
+            if 맞음:
                 for x in 버린것:
                     used_e.discard(x)          # 안 쓴 줄은 창고에 돌려둔다
                 return 고른것
@@ -2222,25 +2242,45 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
             끝 = (i == 끝자리)
             앞 = [x for x in out if x]
             피 = 끝말(앞[-1]) if len(앞) >= 2 and 끝말(앞[-1]) == 끝말(앞[-2]) else None
-            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=(끝 and 여백끝), 피할끝=피))
+            # 재즈·블루스는 중간 줄도 열어 둔다 — 조각난 느낌이 그 장르의 결이다
+            뜸 = (끝 and 여백끝) or (not 끝 and rng.random() < 여백률)
+            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=뜸, 피할끝=피))
         out = [x for x in out if x]
+        # 블루스는 한 줄을 두 번 부른다 — AAB. 장르의 정의다.
+        if 설정.get('반복') == 'AAB' and len(out) >= 4:
+            out[2] = out[1]
         return out if 여백끝 else 닫기(out)
 
-    후렴 = [감정줄(mid, hook, ('기본', '영탄'))]
+    # ── 후렴의 가락 — 네 줄을 같은 어절 수로 ──────────────────
+    # 우리말 시는 각운보다 음수율로 가락을 만든다. 어미가 늘 비슷해서
+    # 각운은 공짜로 생기고, 공짜라서 값이 없다. 어절 수를 맞추면
+    # 네 줄이 같은 박자로 떨어진다.
+    후렴줄 = [l for g in mid.get(hook, {}).values() for l in g]
+    셈 = {}
+    for l in 후렴줄:
+        셈[len(l.split())] = 셈.get(len(l.split()), 0) + 1
+    목표어절 = max((n for n, c in 셈.items() if c >= 5), key=lambda n: 셈[n], default=None)
+
+    후렴 = [감정줄(mid, hook, 어절=목표어절)]
     for k in range(3):
         앞 = [x for x in 후렴 if x]
         피 = 끝말(앞[-1]) if len(앞) >= 2 and 끝말(앞[-1]) == 끝말(앞[-2]) else None
-        후렴.append(감정줄(mid, hook, ('영탄', '기본', '의문'),
-                        맺기=(k == 2), 피할끝=피))
+        후렴.append(감정줄(mid, hook, 맺기=(k == 2), 피할끝=피, 어절=목표어절))
     후렴 = 닫기([x for x in 후렴 if x])
+    while len(후렴) < 4:                      # 모자라면 조건을 풀고 채운다
+        x = 감정줄(mid, hook, 맺기=(len(후렴) == 3))
+        if not x:
+            break
+        후렴.append(x)
 
     v1 = 절(idxs[0], True)
     v2 = 절(idxs[1], True)
     v3 = 절(idxs[2], True)
     bpool = [c for c in pool if c not in pattern] or pool
     bc = chosung_lottery(rng, 2, bpool)
-    b1 = 감정줄(idxs[2], bc[0], ('대조', '의지', '양보', '기본'))
-    b2 = 감정줄(idxs[2], bc[-1], ('대조', '의지', '기본'), 맺기=True,
+    브릿지말투 = dict(말투); 브릿지말투['대조'] = 브릿지말투.get('대조', 1) + 4
+    b1 = 감정줄(idxs[2], bc[0], 브릿지말투)
+    b2 = 감정줄(idxs[2], bc[-1], 브릿지말투, 맺기=True,
               피할끝=(끝말(b1) if b1 else None))
     br = 닫기([x for x in (b1, b2) if x])
 
@@ -2251,9 +2291,57 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4):
                          ('[Bridge]', br),
                          ('[Verse 3]', v3), ('[Chorus]', 후렴)]}
 
+
+# ══ 결 — 장르마다 가사의 결이 다르다 ══════════════════════════════
+#
+# 우리 엔진은 조각난 이미지를 내놓는다. 발라드는 이야기가 흘러야 하니
+# 그게 약점이지만, 블루스·재즈·메탈에서는 조각이 미덕이다.
+#
+# 줄 길이로는 가를 수 없었다 — 창고가 거의 다 7~9자다.
+# 소리의 세기로도 못 가른다 — '흐릿해도 따뜻해'는 소리만 세고 뜻은 안 세다.
+# 진짜로 가르는 것은 둘이다.
+#     ① 어미 말투 — 메탈은 '~리라/간다', 발라드는 '~네', 재즈는 열어 둔다
+#     ② 반복 구조 — 블루스는 한 줄을 두 번 부른다(AAB). 장르의 정의다.
+
+# 말투는 '순서'가 아니라 '표 수'여야 한다.
+# 순서로 주면 기본이 맨 앞이고 모든 줄에 기본이 있으니 늘 기본만 이긴다.
+# 표를 주면 장르마다 실제로 말투가 쏠린다.
+결표 = {
+ '블루스': {'말투': {'기본': 5, '영탄': 4, '양보': 2, '연결': 1},
+          '여백': 0.55, '반복': 'AAB'},
+ '재즈':  {'말투': {'기본': 3, '연결': 4, '양보': 3, '대조': 2, '영탄': 1},
+          '여백': 0.70, '반복': None},
+ '메탈':  {'말투': {'의지': 6, '기본': 4, '대조': 2, '경어': 0, '영탄': 0},
+          '여백': 0.15, '반복': None},
+ '락':    {'말투': {'의지': 4, '기본': 5, '영탄': 2, '대조': 2},
+          '여백': 0.25, '반복': None},
+ '힙합':  {'말투': {'기본': 5, '대조': 3, '연결': 3, '의문': 1},
+          '여백': 0.25, '반복': None, '한초성': True},
+ '발라드': {'말투': {'기본': 5, '영탄': 4, '연결': 2, '의문': 2, '양보': 1},
+          '여백': 0.30, '반복': None},
+}
+
+_결말 = [
+ ('메탈',  ('metal', 'heavy', 'thrash', 'doom', '메탈', '헤비')),
+ ('힙합',  ('hip hop', 'hiphop', 'rap', 'trap', 'drill', '힙합', '랩')),
+ ('블루스', ('blues', 'soul', '블루스', '소울')),
+ ('재즈',  ('jazz', 'swing', 'bossa', 'lounge', '재즈', '스윙', '보사')),
+ ('락',    ('rock', 'punk', 'grunge', 'alternative', '락', '록', '펑크')),
+ ('발라드', ('ballad', 'pop', 'trot', 'r&b', '발라드', '트로트', '팝')),
+]
+
+
+def 결찾기(style):
+    """앱이 보낸 분위기 글에서 장르를 읽는다. 못 읽으면 발라드."""
+    t = (style or '').lower()
+    for g, words in _결말:
+        if any(w in t for w in words):
+            return g
+    return '발라드'
+
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
 
-ENGINE = 'cgo-lotto-9'
+ENGINE = 'cgo-lotto-11'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
@@ -2323,7 +2411,7 @@ def lyrics(topic='', style='', seed=None, 긴곡=True, 초성수=5):
     """서버 입구 — 수노에 그대로 넣을 수 있는 한국어 가사를 돌려준다.
     긴곡=True 면 세 마음을 하나로 묶은 26줄짜리, False 면 18줄짜리."""
     obj, emo = pick(topic, seed)
-    s = make_long(obj, emo, seed=seed, 초성수=초성수) if 긴곡 else make(obj, emo, seed=seed)
+    s = make_long(obj, emo, seed=seed, 초성수=초성수, 결=결찾기(style)) if 긴곡 else make(obj, emo, seed=seed)
     out = []
     for tag, ls in s['sections']:
         if not ls:
@@ -2335,9 +2423,10 @@ def lyrics(topic='', style='', seed=None, 긴곡=True, 초성수=5):
 def detail(topic='', style='', seed=None, 긴곡=True, 초성수=5):
     """가사 + 어떻게 뽑았는지 — /lyrics-test 로 들여다볼 때 쓴다"""
     obj, emo = pick(topic, seed)
-    s = make_long(obj, emo, seed=seed, 초성수=초성수) if 긴곡 else make(obj, emo, seed=seed)
+    g = 결찾기(style)
+    s = make_long(obj, emo, seed=seed, 초성수=초성수, 결=g) if 긴곡 else make(obj, emo, seed=seed)
     t = lyrics(topic, style, seed, 긴곡, 초성수)
-    return {'lyrics': t, 'obj': obj, 'emotion': emo, 'kind': s['kind'],
+    return {'lyrics': t, 'obj': obj, 'emotion': emo, 'kind': s['kind'], 'genre': g,
             'arc': ' → '.join(s.get('arc') or [emo]),
             'pattern': s['pattern'], 'hook': s['hook'],
             'lines': len([x for x in t.split('\n') if x.strip() and not x.startswith('[')]),
