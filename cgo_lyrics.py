@@ -2005,12 +2005,54 @@ _끝말들 = ('는데', '을게', '겠지', '리라', '습니다', '이야', '�
           '어', '아', '야', '네', '까', '지', '고', '해', '와', '가', '져', '라')
 
 
+_비유 = ('처럼', '같이', '듯이', '듯', '마냥')
+
+
+def 비유인가(l):
+    """'~처럼 / ~듯이'로 끝나는 줄. 잇따르면 비교만 있고 비교 대상이 없어진다.
+       숨겨둔 편지처럼 / 하루가 저물듯이 / 어긋난 계절처럼  ← 무엇이 그런지가 없다"""
+    return l.endswith(_비유)
+
+
 def 끝말(l):
     """줄의 맺음 소리 — 같은 소리가 세 줄 잇따르면 노래가 늘어진다"""
     for k in _끝말들:
         if l.endswith(k):
             return k
     return l[-1:]
+
+
+def 비유떼기(out):
+    """붙어 있는 비유를 떼어 놓는다.
+       닫기()가 줄 자리를 바꾸므로, 뽑을 때 걸러도 뒤에서 다시 붙을 수 있다.
+       자리바꿈이 끝난 '뒤에' 한 번 더 본다. 마지막 줄은 맺는 줄이라 건드리지 않는다.
+
+       앞서 쓴 판은 '옮겨 갈 자리의 이웃도 비유면 안 된다'고 따졌는데,
+       그 이웃이 바로 지금 옮기려는 비유라서 아무 자리도 못 골랐다.
+       그래서 따지지 않고, 바꿔 보고 붙은 수가 줄면 받아들인다."""
+    def 붙은수(ls):
+        return sum(1 for j in range(len(ls) - 1) if 비유인가(ls[j]) and 비유인가(ls[j + 1]))
+
+    for _ in range(4):
+        n = 붙은수(out)
+        if not n:
+            break
+        나아짐 = False
+        for a in range(len(out) - 1):                 # 마지막 줄은 그대로 둔다
+            for b in range(len(out) - 1):
+                if a == b:
+                    continue
+                바꿈 = list(out)
+                바꿈[a], 바꿈[b] = 바꿈[b], 바꿈[a]
+                if 붙은수(바꿈) < n:
+                    out[:] = 바꿈
+                    나아짐 = True
+                    break
+            if 나아짐:
+                break
+        if not 나아짐:
+            break
+    return out
 
 
 def 닫기(out):
@@ -2024,7 +2066,7 @@ def 닫기(out):
                 break
     while len(out) >= 3 and _needs_next(out[-1]):
         out.pop()
-    return out
+    return 비유떼기(out)
 
 
 def _verb_idx(kind, obj):
@@ -2208,7 +2250,7 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4, 결='발라드'):
             표 += [m] * n
         return rng.choice(표) if 표 else '기본'
 
-    def 감정줄(d, c, moods=None, 맺기=False, 여백=False, 피할끝=None, 어절=None):
+    def 감정줄(d, c, moods=None, 맺기=False, 여백=False, 피할끝=None, 어절=None, 비유막기=False):
         """어절이 주어지면 그 어절 수인 줄만 뽑는다 — 후렴의 가락을 맞추기 위해.
         어미를 바꾸면 어절이 줄기도 한다('해내고 말 거야' 3 → '해내고 말리라' 2).
         그래서 바꾼 뒤의 꼴로 센다."""
@@ -2224,7 +2266,8 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4, 결='발라드'):
             f = allforms(l)
             고른것 = f.get(말투고르기(f, moods), l)
             맞음 = (피할끝 is None or 끝말(고른것) != 피할끝) and \
-                   (어절 is None or len(고른것.split()) == 어절)
+                   (어절 is None or len(고른것.split()) == 어절) and \
+                   not (비유막기 and 비유인가(고른것))
             if 맞음:
                 for x in 버린것:
                     used_e.discard(x)          # 안 쓴 줄은 창고에 돌려둔다
@@ -2244,12 +2287,13 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4, 결='발라드'):
             피 = 끝말(앞[-1]) if len(앞) >= 2 and 끝말(앞[-1]) == 끝말(앞[-2]) else None
             # 재즈·블루스는 중간 줄도 열어 둔다 — 조각난 느낌이 그 장르의 결이다
             뜸 = (끝 and 여백끝) or (not 끝 and rng.random() < 여백률)
-            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=뜸, 피할끝=피))
+            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=뜸, 피할끝=피,
+                            비유막기=bool(앞 and 비유인가(앞[-1]))))
         out = [x for x in out if x]
         # 블루스는 한 줄을 두 번 부른다 — AAB. 장르의 정의다.
         if 설정.get('반복') == 'AAB' and len(out) >= 4:
             out[2] = out[1]
-        return out if 여백끝 else 닫기(out)
+        return 비유떼기(out) if 여백끝 else 닫기(out)
 
     # ── 후렴의 가락 — 네 줄을 같은 어절 수로 ──────────────────
     # 우리말 시는 각운보다 음수율로 가락을 만든다. 어미가 늘 비슷해서
@@ -2265,7 +2309,8 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4, 결='발라드'):
     for k in range(3):
         앞 = [x for x in 후렴 if x]
         피 = 끝말(앞[-1]) if len(앞) >= 2 and 끝말(앞[-1]) == 끝말(앞[-2]) else None
-        후렴.append(감정줄(mid, hook, 맺기=(k == 2), 피할끝=피, 어절=목표어절))
+        후렴.append(감정줄(mid, hook, 맺기=(k == 2), 피할끝=피, 어절=목표어절,
+                        비유막기=bool(앞 and 비유인가(앞[-1]))))
     후렴 = 닫기([x for x in 후렴 if x])
     while len(후렴) < 4:                      # 모자라면 조건을 풀고 채운다
         x = 감정줄(mid, hook, 맺기=(len(후렴) == 3))
@@ -2281,7 +2326,8 @@ def make_long(obj, emotion='추억', seed=None, 초성수=4, 결='발라드'):
     브릿지말투 = dict(말투); 브릿지말투['대조'] = 브릿지말투.get('대조', 1) + 4
     b1 = 감정줄(idxs[2], bc[0], 브릿지말투)
     b2 = 감정줄(idxs[2], bc[-1], 브릿지말투, 맺기=True,
-              피할끝=(끝말(b1) if b1 else None))
+              피할끝=(끝말(b1) if b1 else None),
+              비유막기=bool(b1 and 비유인가(b1)))
     br = 닫기([x for x in (b1, b2) if x])
 
     return {'obj': obj, 'kind': kind, 'emotion': emotion, 'arc': arc,
@@ -2341,7 +2387,7 @@ def 결찾기(style):
 
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
 
-ENGINE = 'cgo-lotto-11'
+ENGINE = 'cgo-lotto-14'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
