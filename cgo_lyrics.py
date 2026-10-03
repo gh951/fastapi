@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# ══════════════════════════════════════════════════════════════
+#   이 파일의 이름은  cgo_lyrics.py  입니다
+#   gh951/fastapi 의 cgo_lyrics.py 에 붙여넣으세요 (main.py 아님!)
+# ══════════════════════════════════════════════════════════════
 """CGO-FULI 추첨통 가사 엔진 — 서버용 한 덩어리
 
    딥러닝 없음. 한글 초성(ㄱㄴㄷ…)을 거푸집으로 삼아
@@ -1440,6 +1444,26 @@ _OPEN = ('다가','면서','려고','려면','거나','지만','든지','도록'
          '으면','아면','어면','나면','가면','오면','되면','지면','치면','히면','리면')
 
 
+# ── 조사로 매달린 줄 ──
+# 동사 어미(다가·면서)만 '열린 줄'로 봤는데, 조사도 마찬가지다.
+#   벌어진 틈 사이로 …    ← 뒤에 뭐가 와야 끝난다
+#   지금 이 순간처럼 …
+#   먼지 쌓인 연필 위에 …
+# 절 안에서는 좋은 줄이다. 절 '끝'에 오면 허공에 뜬다.
+_HANG = ('처럼','같이','듯이','에서','에게','보다','까지','부터','하고','마다','으로','로',
+         '위에','속에','앞에','옆에','아래','너머','사이로','쪽으로','째로','만큼')
+
+
+def _hangs(line):
+    """뒤에 받아줄 줄이 있어야 끝나는 줄인가"""
+    return line.endswith(_HANG)
+
+
+def _needs_next(line):
+    """절 마지막 자리에 놓으면 안 되는 줄"""
+    return _is_open(line) or _hangs(line)
+
+
 def _is_open(line):
     return line.endswith(_OPEN)
 
@@ -1734,6 +1758,21 @@ _종이 = {'편지','사진','쪽지','엽서','일기','일기장','성적표',
          '교과서','문제집','연습장','부적','영수증','메모','가계부','앨범'}
 _종이말 = ('한 장', '첫 장', '펼쳐둔', '접어둔', '구겨진', '고이 접은', '눌러 쓴', '첫 장에 적힌')
 
+# 골목·거리·어귀·길목·담장 은 '사람이 모여 사는 동네'에만 있다.
+# 정류장은 한 지점이지 동네가 아니다 — '정류장 골목'은 말이 안 된다.
+# (낱말 안에 든 글자에 걸리면 안 된다. '가물거리는'의 '거리'는 거리가 아니다.
+#  그래서 자리표시 바로 뒤에 오는 것만 본다.)
+_마을 = {'고향','마을','동네','시골','도시','골목','뒷골목','시장','바닷가','읍내','번화가','촌'}
+_마을말 = ('□ 골목', '□ 거리', '□ 어귀', '□ 길목', '□ 담장')
+
+
+def place_ok(obj, pat):
+    """동네에만 쓰는 문형인데 사물이 동네가 아니면 쓰지 않는다"""
+    if obj.strip() in _마을:
+        return True
+    return not any(w in pat for w in _마을말)
+
+
 def paper_ok(obj, pat):
     """종이 문형인데 사물이 종이가 아니면 쓰지 않는다"""
     if obj.strip() in _종이: return True
@@ -1824,11 +1863,17 @@ def build(bank):
     return idx
 
 
-def draw(idx, c, rng, used, prefer=None):
-    """초성 c 칸에서 한 줄 뽑는다 — 센 등급부터, 쓴 줄은 건너뛴다"""
+def draw(idx, c, rng, used, prefer=None, 맺기=False, obj=None):
+    """초성 c 칸에서 한 줄 뽑는다 — 센 등급부터, 쓴 줄은 건너뛴다.
+       맺기=True 면 '뒤에 뭐가 와야 끝나는 줄'(~처럼·~로·~위에)은 빼고 뽑는다."""
     order = prefer or ((어절, 글자) if c in 약한머리 else (머리, 어절, 글자))
     for g in order:
         cand = [l for l in idx.get(c, {}).get(g, []) if l not in used]
+        if 맺기:
+            tried = [l for l in cand
+                     if not _needs_next(l if obj is None else l.replace('□', obj))]
+            if tried:
+                cand = tried
         if cand:
             l = rng.choice(cand)
             used.add(l)
@@ -1859,7 +1904,7 @@ def _pat_idx(pat, obj):
     out = {}
     for c, v in pat.items():
         for p in v:
-            if not paper_ok(obj, p):
+            if not paper_ok(obj, p) or not place_ok(obj, p):
                 continue
             plain = fill(p, obj)
             for ch, (g, n) in marks(plain).items():
@@ -1886,12 +1931,12 @@ def make(obj, emotion='추억', seed=None):
     pattern, hook = picks[:4], picks[4]
     used_p, used_e = set(), set()
 
-    def 사물줄(c):
-        p, _ = draw(pidx, c, rng, used_p)
+    def 사물줄(c, 맺기=False):
+        p, _ = draw(pidx, c, rng, used_p, 맺기=맺기, obj=obj)
         return fill(p, obj) if p else None
 
-    def 감정줄(c, moods=('기본', '영탄', '연결', '의문', '양보')):
-        l, _ = draw(emo, c, rng, used_e)
+    def 감정줄(c, moods=('기본', '영탄', '연결', '의문', '양보'), 맺기=False):
+        l, _ = draw(emo, c, rng, used_e, 맺기=맺기)
         if not l:
             return None
         f = allforms(l)
@@ -1904,26 +1949,30 @@ def make(obj, emotion='추억', seed=None):
         """③ 열린 줄은 절 끝에 두지 않는다 — 끌고 갈 다음 줄이 없으면 허공에 뜬다.
            닫는 줄과 자리를 바꿔서 '열린 줄 → 닫는 줄' 순서를 만든다."""
         out = [x for x in out if x]
-        if out and _is_open(out[-1]) and len(out) >= 2:
+        if out and _needs_next(out[-1]) and len(out) >= 2:
             for j in range(len(out) - 2, -1, -1):
-                if not _is_open(out[j]):
+                if not _needs_next(out[j]):
                     out[j], out[-1] = out[-1], out[j]
                     break
         # 그래도 끝이 열려 있으면(전부 열린 줄) 마지막 줄을 뺀다
-        while len(out) >= 2 and _is_open(out[-1]):
+        while len(out) >= 3 and _needs_next(out[-1]):
             out.pop()
         return out
 
     def 절(chs):
         """사물 줄과 감정 줄을 번갈아 — 사물만 나열되면 노래가 안 된다"""
         out = []
+        last = len(chs) - 1
         for i, c in enumerate(chs):
-            l = 사물줄(c) if i % 2 == 0 else 감정줄(c)
-            out.append(l or 감정줄(c) or 사물줄(c) or '')
+            m = (i == last)                      # 마지막 줄은 맺는 줄로
+            l = 사물줄(c, m) if i % 2 == 0 else 감정줄(c, 맺기=m)
+            out.append(l or 감정줄(c, 맺기=m) or 사물줄(c, m) or
+                       감정줄(c) or 사물줄(c) or '')
         return 닫기(out)
 
     v1 = 절(pattern)
-    ch = [사물줄(hook) or 감정줄(hook)] + [감정줄(hook, ('영탄', '기본', '의문')) for _ in range(3)]
+    ch = [사물줄(hook) or 감정줄(hook)] + [감정줄(hook, ('영탄', '기본', '의문')) for _ in range(2)]
+    ch.append(감정줄(hook, ('영탄', '기본', '의문'), 맺기=True) or 감정줄(hook, ('영탄', '기본')))
     ch = [x for x in ch if x and not _is_open(x)]          # 후렴에는 열린 줄을 쓰지 않는다
     while len(ch) < 4:
         x = 감정줄(hook, ('기본', '영탄'))
@@ -1933,13 +1982,18 @@ def make(obj, emotion='추억', seed=None):
             ch.append(x)
     v2 = 절(pattern)
     bpool = [c for c in pool if c not in pattern] or pool
-    br = [감정줄(c, ('대조', '의지', '양보', '기본')) for c in chosung_lottery(rng, 2, bpool)]
+    _bc = chosung_lottery(rng, 2, bpool)
+    br = [감정줄(_bc[0], ('대조', '의지', '양보', '기본'))]
+    br.append(감정줄(_bc[-1], ('대조', '의지', '기본'), 맺기=True) or
+              감정줄(_bc[-1], ('대조', '의지', '기본')))
     br = 닫기(br)
     return {'obj': obj, 'kind': kind, 'emotion': emotion, 'pattern': pattern, 'hook': hook,
             'sections': [('[Verse 1]', v1), ('[Chorus]', ch), ('[Verse 2]', v2),
                          ('[Bridge]', br), ('[Chorus]', ch)]}
 
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
+
+ENGINE = 'cgo-lotto-4'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
@@ -2023,4 +2077,4 @@ def detail(topic='', style='', seed=None):
     s = make(obj, emo, seed=seed)
     return {'lyrics': lyrics(topic, style, seed), 'obj': obj, 'emotion': emo,
             'kind': s['kind'], 'pattern': s['pattern'], 'hook': s['hook'],
-            'engine': 'cgo-lotto-2'}
+            'engine': ENGINE}
