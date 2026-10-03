@@ -343,8 +343,23 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-479"
-CGO_SRV_NOTE = "붐비면 옆 모델로(479) · 수노 스타일 압축(478) · 가사 주문 짧게(477)"
+CGO_SRV_VER = "cgo-481"
+CGO_SRV_NOTE = "거꾸로 초성·우리말 불규칙(481) · 추첨통 가사 엔진(480) · 붐비면 옆 모델로(479)"
+
+
+# ── cgo-480: 우리가 만든 추첨통 가사 엔진 ─────────────────────────
+# 구글이 붐비면(503) 가사가 옛 뼈대 가사로 내려앉았다. 남의 집 사정에
+# 노래 품질이 걸려 있는 구조다. 그래서 한글 초성을 거푸집으로 삼아
+# 우리 손으로 짓는 엔진을 만들어 비상 가사 자리에 앉혔다.
+# cgo_lyrics.py 를 같이 올려야 켜진다. 없으면 예전처럼 돌아간다.
+try:
+    import cgo_lyrics as _CGO_LOTTO
+    _CGO_LOTTO_ON = True
+    _CGO_LOTTO_WHY = ''
+except Exception as _e480:
+    _CGO_LOTTO = None
+    _CGO_LOTTO_ON = False
+    _CGO_LOTTO_WHY = f'{type(_e480).__name__}: {_e480}'
 
 
 def _cgo_key_src() -> str:
@@ -358,12 +373,29 @@ def root():
             "ver": CGO_SRV_VER, "key_src": _cgo_key_src()}
 
 
+@app.get("/lyrics-test")
+def lyrics_test(topic: str = '', style: str = '', n: int = 1, seed: int = 0):
+    """cgo-480: 수노를 부르지 않고 우리 가사만 본다 — 돈이 들지 않는다.
+    보기: /lyrics-test?topic=어릴 때 쓰던 연필&n=3"""
+    if not _CGO_LOTTO_ON:
+        return {"ok": False, "why": "cgo_lyrics.py 를 서버에 올려야 합니다", "err": _CGO_LOTTO_WHY}
+    try:
+        n = max(1, min(int(n), 10))
+        base = int(seed) or int(time.time())
+        return {"ok": True, "engine": "cgo-lotto-1", "topic": topic,
+                "songs": [_CGO_LOTTO.detail(topic, style, seed=base + i) for i in range(n)]}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/version")
 def version():
     """배포 확인 전용. 휴대폰 브라우저에서 열어 'ver'만 보면 된다."""
     return {"ver": CGO_SRV_VER, "note": CGO_SRV_NOTE,
             "key_src": _cgo_key_src(),
             "lyrics_ai": (" → ".join(CGO_LLM_MODELS) if CGO_LLM_KEY else "꺼짐 — CGO_LLM_KEY 미설정"),
+            "lyrics_own": ("켜짐 — 추첨통 엔진 cgo-lotto-2 (거꾸로 초성)" if _CGO_LOTTO_ON
+                           else "꺼짐 — cgo_lyrics.py 없음 (" + _CGO_LOTTO_WHY + ")"),
             "started": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(_CGO_BOOT_TS)) + " UTC",
             "uptime_min": round((time.time() - _CGO_BOOT_TS) / 60, 1)}
 
@@ -3584,8 +3616,18 @@ def _generate_korean_lyrics(topic: str, style: str) -> str:
     """서버 로컬 한국어 가사 생성기 — Udio 실패 시 폴백.
     cgo-443: 주제 글(topic)은 '분위기 판별'에만 쓰고 가사 줄에는 절대 넣지 않는다.
     (이전에는 f'{topic}... 안녕' 처럼 사용자가 쓴 문장이 그대로 가사에 박혔다.)
-    어미를 무작위로 이어 붙이던 방식도 폐기 — 완성된 문장만 쓴다."""
+    어미를 무작위로 이어 붙이던 방식도 폐기 — 완성된 문장만 쓴다.
+
+    cgo-480: 이제 맨 먼저 우리 추첨통 엔진에 물어본다. 아래 뼈대 가사는
+    cgo_lyrics.py 가 없을 때만 쓰이는 두 번째 비상구로 남겨둔다."""
     seed = int(_lyrics_hash.md5(f"{topic}{style}{time.time():.0f}".encode()).hexdigest()[:8], 16)
+    if _CGO_LOTTO_ON:
+        try:
+            _out = _CGO_LOTTO.lyrics(topic or '', style or '', seed=seed)
+            if _out and _out.count('\n') >= 8:
+                return _out
+        except Exception as _e:
+            print(f"[cgo-480] 추첨통 엔진 실패, 뼈대 가사로: {type(_e).__name__}: {_e}")
     rng = _lyrics_random.Random(seed)
     kw = (topic or '').lower()
     sad_kw = ['이별','슬픈','눈물','그리움','아픔','외로','헤어','비','울','잊','떠나','보내','미련','상처']
