@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-469"
-CGO_SRV_NOTE = "가사 언어 선택 반영(469) · 여자 보컬+남자 랩 분리(447) · 음색 원문 보존(446)"
+CGO_SRV_VER = "cgo-471"
+CGO_SRV_NOTE = "글 안 써도 곡 생성(471) · 가사를 Suno에서 받음(470) · 가사 언어 선택(469)"
 
 
 def _cgo_key_src() -> str:
@@ -3815,8 +3815,79 @@ def _why(api_error: str) -> str:
         return 'AI 가사 생성이 오래 걸려 기본 가사로 만들었습니다'
     return 'AI 가사 서버에 연결하지 못했습니다'
 
+# ── cgo-470: 가사를 Suno에게 받는다 ────────────────────────────────
+# 그동안 가사는 Udio(다른 회사 음악엔진)에서 받고 노래는 Suno가 불렀다.
+# 가사는 '글'인데 Udio의 작곡 대기열 뒤에 줄을 서느라 "no available capacity"가
+# 자주 떴다. 노래를 부를 Suno에게 가사도 맡기면 대기열이 갈라지고, 가사와 곡이
+# 같은 집에서 나와 결도 맞는다. Udio는 예비로만 남긴다.
+_SUNO_LYRICS_URL = 'https://api.apiframe.pro/suno-lyrics'
+_SUNO_FETCH_URL = 'https://api.apiframe.pro/fetch'
+
+
+def _hdr(style: str) -> dict:
+    """apiframe은 창구(.pro/.ai)마다 인증 헤더 이름이 다르다. 둘 다 시도해 본다."""
+    key = 'Authorization' if style == 'auth' else 'X-API-Key'
+    return {key: APIFRAME_KEY, 'Content-Type': 'application/json'}
+
+
+def _suno_fetch(task_id: str, style: str, max_wait: float = 38.0, interval: float = 2.5):
+    """suno-lyrics 작업이 끝날 때까지 기다린다 → (가사, 오류설명)"""
+    deadline = time.time() + max_wait
+    last = ''
+    while time.time() < deadline:
+        time.sleep(interval)
+        try:
+            r = http_requests.post(_SUNO_FETCH_URL, headers=_hdr(style),
+                                   json={'task_id': task_id}, timeout=15)
+            if r.ok:
+                d = r.json()
+                lyr = _extract_lyrics(d)
+                if lyr:
+                    return lyr, ''
+                st = str(d.get('status') or '').lower()
+                if st in ('failed', 'error'):
+                    return '', f"가사 생성 실패: {str(d)[:200]}"
+                last = f"진행 중({st or '상태 미표시'})"
+            else:
+                last = f"fetch HTTP {r.status_code}: {r.text[:150]}"
+                if r.status_code in (401, 403, 404):
+                    return '', last
+        except Exception as e:
+            last = f"fetch 예외: {e}"
+    return '', last or '시간 초과'
+
+
+def _suno_lyrics_once(prompt_text: str):
+    """Suno 가사 API 1회 시도 → (가사, 오류설명)"""
+    last = ''
+    for style in ('auth', 'xkey'):
+        try:
+            resp = http_requests.post(_SUNO_LYRICS_URL, headers=_hdr(style),
+                                      json={'prompt': prompt_text}, timeout=30)
+        except Exception as e:
+            last = f"연결 예외: {e}"
+            continue
+        if resp.status_code in (401, 403):
+            last = f"인증 거부(HTTP {resp.status_code})"
+            continue                      # 헤더 이름을 바꿔 한 번 더
+        if not resp.ok:
+            return '', f"HTTP {resp.status_code}: {resp.text[:200]}"
+        try:
+            result = resp.json()
+        except Exception:
+            return '', f"응답이 JSON이 아님: {resp.text[:150]}"
+        lyr = _extract_lyrics(result)
+        if lyr:
+            return lyr, ''
+        task_id = _job_id_of(result)
+        if not task_id:
+            return '', f"task_id 없음: {str(result)[:200]}"
+        return _suno_fetch(task_id, style)
+    return '', last or 'suno-lyrics 호출 실패'
+
+
 def _udio_once(prompt_text: str):
-    """Udio 가사 API 1회 시도 → (가사, 오류설명)"""
+    """Udio 가사 API 1회 시도 → (가사, 오류설명). cgo-470부터는 예비 통로."""
     try:
         resp = http_requests.post(
             'https://api.apiframe.ai/v2/music/udio/lyrics',
@@ -3839,11 +3910,13 @@ def _udio_once(prompt_text: str):
 
 @app.post("/generate_lyrics")
 def generate_lyrics(body: dict):
-    """AI 가사 생성 — Udio(최대 3회 재시도) → 실패 시 로컬 생성기. 항상 가사를 돌려준다."""
+    """AI 가사 생성 — Suno(최대 3회) → 예비로 Udio → 비상 가사. 항상 가사를 돌려준다."""
     topic = (body.get('topic') or '').strip()
     style = (body.get('style') or 'pop ballad').strip()
+    # cgo-471: 글을 안 써도 막지 않는다. 고른 분위기(style)만으로도 가사를 만든다.
+    # 전에는 400을 돌려줘서, 클릭만으로 곡을 만들려는 사람은 여기서 멈췄다.
     if not topic:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "주제/분위기를 입력해 주세요."})
+        topic = style if style and style != 'pop ballad' else 'a quiet feeling that is hard to name'
     _lang0 = (body.get('lang') or '').strip() or 'Korean'      # cgo-469
     if body.get('local_only') or not APIFRAME_KEY:
         return _local_lyrics_response(topic, style, '' if APIFRAME_KEY else 'API 키 미설정', _lang0)
@@ -3858,17 +3931,34 @@ def generate_lyrics(body: dict):
                    f"Include [Verse], [Chorus], [Bridge] structure tags. "
                    f"Output the lyrics only.")[:2000]
     api_error = ''
+    # cgo-470: Suno 먼저, 안 되면 Udio, 그래도 안 되면 비상 가사.
+    # 앱이 120초에 끊으므로 95초 안에서 끝낸다 — 늦게 주느니 비상 가사라도 주는 게 낫다.
+    _deadline = time.time() + 95
     WAITS = [0, 4, 9]          # 1회차 즉시, 2회차 4초 뒤, 3회차 9초 뒤
     for attempt, wait in enumerate(WAITS, start=1):
         if wait:
+            if time.time() + wait > _deadline:
+                break
             time.sleep(wait)
-        lyr, api_error = _udio_once(prompt_text)
+        lyr, api_error = _suno_lyrics_once(prompt_text)
         if lyr:
-            return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio", "attempt": attempt})
-        print(f"[generate_lyrics] Udio {attempt}/{len(WAITS)}회차 실패: {api_error}", flush=True)
+            return JSONResponse(content={"ok": True, "lyrics": lyr,
+                                         "source": "suno", "attempt": attempt})
+        print(f"[generate_lyrics] Suno {attempt}/{len(WAITS)}회차 실패: {api_error}", flush=True)
         if not _is_retryable(api_error):
             break              # 인증·크레딧 오류는 재시도해도 소용없다
-    print(f"[generate_lyrics] Udio 최종 실패 → 로컬 폴백: {api_error}", flush=True)
+        if time.time() > _deadline:
+            break
+
+    # 예비 통로 — Udio
+    if time.time() < _deadline:
+        lyr2, err2 = _udio_once(prompt_text)
+        if lyr2:
+            return JSONResponse(content={"ok": True, "lyrics": lyr2, "source": "udio"})
+        print(f"[generate_lyrics] 예비 Udio도 실패: {err2}", flush=True)
+        api_error = api_error or err2
+
+    print(f"[generate_lyrics] 최종 실패 → 비상 가사: {api_error}", flush=True)
     return _local_lyrics_response(topic, style, api_error, lang)   # cgo-469
 
 @app.get("/lyrics_status/{job_id}")
