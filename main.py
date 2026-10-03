@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-481"
-CGO_SRV_NOTE = "거꾸로 초성·우리말 불규칙(481) · 추첨통 가사 엔진(480) · 붐비면 옆 모델로(479)"
+CGO_SRV_VER = "cgo-482"
+CGO_SRV_NOTE = "우리 가사를 경고로 안 띄운다(482) · 거꾸로 초성(481) · 추첨통 가사 엔진(480)"
 
 
 # ── cgo-480: 우리가 만든 추첨통 가사 엔진 ─────────────────────────
@@ -382,8 +382,9 @@ def lyrics_test(topic: str = '', style: str = '', n: int = 1, seed: int = 0):
     try:
         n = max(1, min(int(n), 10))
         base = int(seed) or int(time.time())
-        return {"ok": True, "engine": "cgo-lotto-1", "topic": topic,
-                "songs": [_CGO_LOTTO.detail(topic, style, seed=base + i) for i in range(n)]}
+        songs = [_CGO_LOTTO.detail(topic, style, seed=base + i) for i in range(n)]
+        return {"ok": True, "engine": (songs[0].get('engine') if songs else ''),
+                "topic": topic, "songs": songs}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -3612,6 +3613,21 @@ def vvip_info():
 import random as _lyrics_random
 import hashlib as _lyrics_hash
 
+def _cgo_lotto(topic, style, seed=None):
+    """우리 추첨통 엔진을 한 번 돌린다 — 되면 (가사, 정보), 안 되면 (None, None).
+    cgo-482: 서버가 '이건 우리 가사'라고 말할 수 있어야 앱이 경고 대신
+    제대로 된 표시를 띄운다. 그래서 가사만이 아니라 정보도 같이 돌려준다."""
+    if not _CGO_LOTTO_ON:
+        return None, None
+    try:
+        d = _CGO_LOTTO.detail(topic or '', style or '', seed=seed)
+        if d.get('lyrics') and d['lyrics'].count('\n') >= 8:
+            return d['lyrics'], d
+    except Exception as e:
+        print(f"[cgo-482] 추첨통 엔진 실패, 뼈대 가사로: {type(e).__name__}: {e}", flush=True)
+    return None, None
+
+
 def _generate_korean_lyrics(topic: str, style: str) -> str:
     """서버 로컬 한국어 가사 생성기 — Udio 실패 시 폴백.
     cgo-443: 주제 글(topic)은 '분위기 판별'에만 쓰고 가사 줄에는 절대 넣지 않는다.
@@ -3621,13 +3637,9 @@ def _generate_korean_lyrics(topic: str, style: str) -> str:
     cgo-480: 이제 맨 먼저 우리 추첨통 엔진에 물어본다. 아래 뼈대 가사는
     cgo_lyrics.py 가 없을 때만 쓰이는 두 번째 비상구로 남겨둔다."""
     seed = int(_lyrics_hash.md5(f"{topic}{style}{time.time():.0f}".encode()).hexdigest()[:8], 16)
-    if _CGO_LOTTO_ON:
-        try:
-            _out = _CGO_LOTTO.lyrics(topic or '', style or '', seed=seed)
-            if _out and _out.count('\n') >= 8:
-                return _out
-        except Exception as _e:
-            print(f"[cgo-480] 추첨통 엔진 실패, 뼈대 가사로: {type(_e).__name__}: {_e}")
+    _out, _info = _cgo_lotto(topic, style, seed)
+    if _out:
+        return _out
     rng = _lyrics_random.Random(seed)
     kw = (topic or '').lower()
     sad_kw = ['이별','슬픈','눈물','그리움','아픔','외로','헤어','비','울','잊','떠나','보내','미련','상처']
@@ -3831,7 +3843,21 @@ def _generate_fallback_lyrics(topic: str, style: str, lang: str) -> str:
 
 
 def _local_lyrics_response(topic, style, api_error='', lang='Korean'):
+    """cgo-482: 'local' 하나로 뭉뚱그리던 것을 둘로 나눈다.
+         cgo   — 우리 추첨통 엔진이 지은 가사. 일부러 만든 것이니 경고가 아니다.
+         local — 옛 뼈대 가사. 이건 여전히 비상용이라 경고가 맞다."""
     try:
+        if _is_korean_lang(lang):
+            seed = int(_lyrics_hash.md5(f"{topic}{style}{time.time():.0f}".encode()).hexdigest()[:8], 16)
+            txt, info = _cgo_lotto(topic, style, seed)
+            if txt:
+                return JSONResponse(content={
+                    "ok": True, "lyrics": txt, "source": "cgo",
+                    "engine": info.get('engine', ''), "obj": info.get('obj', ''),
+                    "emotion": info.get('emotion', ''), "hook": info.get('hook', ''),
+                    "chosung": "+".join(info.get('pattern') or []),
+                    "api_error": api_error, "lang": lang,
+                    "reason": _why(api_error) if api_error else ''})
         return JSONResponse(content={"ok": True,
                                      "lyrics": _generate_fallback_lyrics(topic, style, lang),
                                      "source": "local", "api_error": api_error, "lang": lang,
