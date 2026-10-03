@@ -1908,12 +1908,18 @@ def build(bank):
     return idx
 
 
-def draw(idx, c, rng, used, prefer=None, 맺기=False, obj=None):
+def draw(idx, c, rng, used, prefer=None, 맺기=False, obj=None, 여백=False):
     """초성 c 칸에서 한 줄 뽑는다 — 센 등급부터, 쓴 줄은 건너뛴다.
-       맺기=True 면 '뒤에 뭐가 와야 끝나는 줄'(~처럼·~로·~위에)은 빼고 뽑는다."""
+       맺기=True 면 '뒤에 뭐가 와야 끝나는 줄'(~처럼·~로·~위에)은 빼고 뽑는다.
+       여백=True 면 거꾸로 그런 줄을 '골라' 뽑는다 — 다음 절로 넘겨주는 자리에 쓴다."""
     order = prefer or ((어절, 글자) if c in 약한머리 else (머리, 어절, 글자))
     for g in order:
         cand = [l for l in idx.get(c, {}).get(g, []) if l not in used]
+        if 여백:
+            뜸 = [l for l in cand
+                  if _needs_next(l if obj is None else l.replace('□', obj))]
+            if 뜸:
+                cand = 뜸
         if 맺기:
             tried = [l for l in cand
                      if not _needs_next(l if obj is None else l.replace('□', obj))]
@@ -1941,6 +1947,20 @@ def chosung_lottery(rng, n, pool=None):
 
 # ══ 7. 한 곡 짓기 ══
 _EMO_IDX = {e: build(b) for e, b in EMO.items()}
+
+
+def 닫기(out):
+    """열린 줄은 절 끝에 두지 않는다 — 끌고 갈 다음 줄이 없으면 허공에 뜬다.
+       닫는 줄과 자리를 바꿔서 '열린 줄 → 닫는 줄' 순서를 만든다."""
+    out = [x for x in out if x]
+    if out and _needs_next(out[-1]) and len(out) >= 2:
+        for j in range(len(out) - 2, -1, -1):
+            if not _needs_next(out[j]):
+                out[j], out[-1] = out[-1], out[j]
+                break
+    while len(out) >= 3 and _needs_next(out[-1]):
+        out.pop()
+    return out
 
 
 def _verb_idx(kind, obj):
@@ -2012,20 +2032,6 @@ def make(obj, emotion='추억', seed=None, 후렴사물=False):
                 return f[m]
         return l
 
-    def 닫기(out):
-        """③ 열린 줄은 절 끝에 두지 않는다 — 끌고 갈 다음 줄이 없으면 허공에 뜬다.
-           닫는 줄과 자리를 바꿔서 '열린 줄 → 닫는 줄' 순서를 만든다."""
-        out = [x for x in out if x]
-        if out and _needs_next(out[-1]) and len(out) >= 2:
-            for j in range(len(out) - 2, -1, -1):
-                if not _needs_next(out[j]):
-                    out[j], out[-1] = out[-1], out[j]
-                    break
-        # 그래도 끝이 열려 있으면(전부 열린 줄) 마지막 줄을 뺀다
-        while len(out) >= 3 and _needs_next(out[-1]):
-            out.pop()
-        return out
-
     def 절(chs):
         """사물 줄과 감정 줄을 번갈아 — 사물만 나열되면 노래가 안 된다"""
         out = []
@@ -2059,9 +2065,105 @@ def make(obj, emotion='추억', seed=None, 후렴사물=False):
             'sections': [('[Verse 1]', v1), ('[Chorus]', ch), ('[Verse 2]', v2),
                          ('[Bridge]', br), ('[Chorus]', ch)]}
 
+
+# ══ 긴 곡 — 세 마음을 하나로 묶는다 ═══════════════════════════════
+#
+# 한 곡이 18줄이라 노래가 짧았다. 세 곡을 이어 붙이면 길어지지만
+# 그것은 '세 곡'이지 '한 곡'이 아니다. 하나로 묶으려면 무언가가 같아야 한다.
+#
+#   · 사물이 같다      — 편지 하나를 두고 세 시절을 지난다
+#   · 후렴이 같다      — 후렴에 사물이 없으니 어느 절 위에도 뜬다
+#   · 초성 틀이 같다   — 1·2·3절이 같은 초성 차례를 따른다
+#
+# 마음만 움직인다. 주문한 감정이 '가운데'에 오고, 그 앞뒤가 붙는다.
+#   이별을 주문하면 → 사랑 → 이별 → 외로움
+# 그리고 절의 마지막 줄은 일부러 '여백'으로 둔다. 뒤에 후렴이 오니
+# 매달린 게 아니라 넘겨주는 줄이 된다.
+
+감정길 = {
+ '슬픔':  ['이별', '슬픔', '다짐'],
+ '이별':  ['사랑', '이별', '외로움'],
+ '그리움': ['추억', '그리움', '사랑'],
+ '사랑':  ['설렘', '사랑', '다짐'],
+ '희망':  ['슬픔', '희망', '다짐'],
+ '외로움': ['이별', '외로움', '그리움'],
+ '설렘':  ['설렘', '사랑', '희망'],
+ '다짐':  ['슬픔', '다짐', '희망'],
+ '추억':  ['설렘', '추억', '그리움'],
+ '분노':  ['분노', '이별', '다짐'],
+}
+
+
+def make_long(obj, emotion='추억', seed=None):
+    rng = random.Random(seed)
+    arc = 감정길.get(emotion, [emotion] * 3)
+    kind = kind_of(obj)
+    pat = KIND[kind]
+    pidx = _pat_idx(pat, obj)
+    vidx = _verb_idx(kind, obj)
+    idxs = [_EMO_IDX.get(e) or _EMO_IDX['추억'] for e in arc]
+    mid = idxs[1]
+
+    # 세 감정 모두에 있는 초성만 쓴다 — 1·2·3절이 같은 틀을 따라야 하므로
+    pool = [c for c in 무게 if all(c in d for d in idxs) and (c in pidx or c in vidx)]
+    picks = chosung_lottery(rng, 5, pool)
+    if len(picks) < 5:
+        picks = (picks * 5)[:5]
+    pattern, hook = picks[:4], picks[4]
+    used_p, used_e = set(), set()
+
+    def 사물줄(c, 맺기=False):
+        순서 = (vidx, pidx) if rng.random() < 0.75 else (pidx, vidx)
+        for src in 순서:
+            p, _ = draw(src, c, rng, used_p, 맺기=맺기, obj=obj)
+            if p:
+                return fill(p, obj)
+        return None
+
+    def 감정줄(d, c, moods=('기본', '영탄', '연결', '의문', '양보'), 맺기=False, 여백=False):
+        l, _ = draw(d, c, rng, used_e, 맺기=맺기, 여백=여백)
+        if not l:
+            l, _ = draw(d, c, rng, used_e)
+        if not l:
+            return None
+        f = allforms(l)
+        for m in moods:
+            if m in f:
+                return f[m]
+        return l
+
+    def 절(d, 여백끝):
+        """사물 한 줄 + 마음 세 줄. 끝줄은 여백으로 두어 후렴에 넘긴다."""
+        out = [사물줄(pattern[0])]
+        for i, c in enumerate(pattern[1:], 1):
+            끝 = (i == 3)
+            out.append(감정줄(d, c, 맺기=(끝 and not 여백끝), 여백=(끝 and 여백끝)))
+        out = [x for x in out if x]
+        return out if 여백끝 else 닫기(out)
+
+    후렴 = [감정줄(mid, hook, ('기본', '영탄'))]
+    후렴 += [감정줄(mid, hook, ('영탄', '기본', '의문')) for _ in range(2)]
+    후렴.append(감정줄(mid, hook, ('영탄', '기본', '의문'), 맺기=True))
+    후렴 = 닫기([x for x in 후렴 if x])
+
+    v1 = 절(idxs[0], True)
+    v2 = 절(idxs[1], True)
+    v3 = 절(idxs[2], True)
+    bpool = [c for c in pool if c not in pattern] or pool
+    bc = chosung_lottery(rng, 2, bpool)
+    br = 닫기([x for x in [감정줄(idxs[2], bc[0], ('대조', '의지', '양보', '기본')),
+                          감정줄(idxs[2], bc[-1], ('대조', '의지', '기본'), 맺기=True)] if x])
+
+    return {'obj': obj, 'kind': kind, 'emotion': emotion, 'arc': arc,
+            'pattern': pattern, 'hook': hook, 'long': True,
+            'sections': [('[Verse 1]', v1), ('[Chorus]', 후렴),
+                         ('[Verse 2]', v2), ('[Chorus]', 후렴),
+                         ('[Bridge]', br),
+                         ('[Verse 3]', v3), ('[Chorus]', 후렴)]}
+
 # ══ 8. 서버 입구 — main.py 가 부르는 것은 lyrics() 하나뿐 ══
 
-ENGINE = 'cgo-lotto-5'
+ENGINE = 'cgo-lotto-6'
 
 _감정말 = [
  ('이별',  ('이별','헤어','떠나','떠난','작별','안녕','보내','끝났','버림','식어')),
@@ -2127,10 +2229,11 @@ def pick(topic='', seed=None):
     return obj, emo
 
 
-def lyrics(topic='', style='', seed=None):
-    """서버 입구 — 수노에 그대로 넣을 수 있는 한국어 가사를 돌려준다."""
+def lyrics(topic='', style='', seed=None, 긴곡=True):
+    """서버 입구 — 수노에 그대로 넣을 수 있는 한국어 가사를 돌려준다.
+    긴곡=True 면 세 마음을 하나로 묶은 26줄짜리, False 면 18줄짜리."""
     obj, emo = pick(topic, seed)
-    s = make(obj, emo, seed=seed)
+    s = (make_long if 긴곡 else make)(obj, emo, seed=seed)
     out = []
     for tag, ls in s['sections']:
         if not ls:
@@ -2139,10 +2242,13 @@ def lyrics(topic='', style='', seed=None):
     return '\n\n'.join(out)
 
 
-def detail(topic='', style='', seed=None):
+def detail(topic='', style='', seed=None, 긴곡=True):
     """가사 + 어떻게 뽑았는지 — /lyrics-test 로 들여다볼 때 쓴다"""
     obj, emo = pick(topic, seed)
-    s = make(obj, emo, seed=seed)
-    return {'lyrics': lyrics(topic, style, seed), 'obj': obj, 'emotion': emo,
-            'kind': s['kind'], 'pattern': s['pattern'], 'hook': s['hook'],
+    s = (make_long if 긴곡 else make)(obj, emo, seed=seed)
+    t = lyrics(topic, style, seed, 긴곡)
+    return {'lyrics': t, 'obj': obj, 'emotion': emo, 'kind': s['kind'],
+            'arc': ' → '.join(s.get('arc') or [emo]),
+            'pattern': s['pattern'], 'hook': s['hook'],
+            'lines': len([x for x in t.split('\n') if x.strip() and not x.startswith('[')]),
             'engine': ENGINE}
