@@ -343,8 +343,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-482"
-CGO_SRV_NOTE = "우리 가사를 경고로 안 띄운다(482) · 거꾸로 초성(481) · 추첨통 가사 엔진(480)"
+CGO_SRV_VER = "cgo-483"
+CGO_SRV_NOTE = "한국어는 우리 추첨통이 먼저(483) · 출처 구분(482) · 거꾸로 초성(481)"
 
 
 # ── cgo-480: 우리가 만든 추첨통 가사 엔진 ─────────────────────────
@@ -4167,6 +4167,18 @@ def generate_lyrics(body: dict):
     _lang0 = (body.get('lang') or '').strip() or 'Korean'      # cgo-469
     if body.get('local_only') or not APIFRAME_KEY:
         return _local_lyrics_response(topic, style, '' if APIFRAME_KEY else 'API 키 미설정', _lang0)
+
+    # ── cgo-483: 한국어는 우리 추첨통이 '먼저'다 ────────────────────────
+    # 480에서 우리 엔진을 넣었지만 자리를 비상용으로 두었다. 그래서 구글이
+    # 살아 있는 동안에는 늘 구글 가사가 나갔다 — 우리 것을 쓰자고 만들어 놓고
+    # 한 번도 안 쓰이는 구조였다. 한국어는 이제 우리 엔진이 먼저 나간다.
+    #   · 돈이 들지 않는다 (구글 호출 0회)
+    #   · 구글이 붐벼도(503) 영향이 없다
+    #   · 기다림이 없다 — 즉시 나온다
+    # 바깥 AI로 쓰고 싶으면 요청에 use_ai 를 넣으면 된다. 코드를 안 고치고 되돌릴 수 있다.
+    # 한국어가 아닌 언어는 우리 창고가 한글뿐이라 예전처럼 바깥 AI로 간다.
+    if _is_korean_lang(_lang0) and _CGO_LOTTO_ON and not body.get('use_ai'):
+        return _local_lyrics_response(topic, style, '', _lang0)
 
     # cgo-469: 노래 언어를 앱에서 받아 그 언어로 쓰게 한다.
     # 지금까지는 "Korean ... Write in Korean"이 못 박혀 있어서, 앱에서 영어를 골라도
