@@ -347,8 +347,8 @@ def render(req: SimpleReq):
 # 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
 # "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
 # 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
-CGO_SRV_VER = "cgo-484"
-CGO_SRV_NOTE = "파일 이름표·엔진 이름 자동(484) · 한국어는 우리 추첨통이 먼저(483) · 출처 구분(482)"
+CGO_SRV_VER = "cgo-485"
+CGO_SRV_NOTE = "만드는 방법을 밖으로 안 흘린다(485) · 파일 이름표(484) · 한국어는 우리 것 먼저(483)"
 
 
 # ── cgo-480: 우리가 만든 추첨통 가사 엔진 ─────────────────────────
@@ -377,18 +377,28 @@ def root():
             "ver": CGO_SRV_VER, "key_src": _cgo_key_src()}
 
 
+# cgo-485: 이 주소는 누구나 열 수 있다. 속내(사물·감정·초성 틀·엔진 이름)는
+# 레일웨이 Variables 에 CGO_PEEK 를 넣고 ?peek=그값 으로 열 때만 보여준다.
+# 변수를 안 넣으면 아무에게도 안 보인다 — 코드에 적어두면 공개 저장소에서 보이니까.
+CGO_PEEK = os.environ.get('CGO_PEEK', '').strip()
+
+
 @app.get("/lyrics-test")
-def lyrics_test(topic: str = '', style: str = '', n: int = 1, seed: int = 0):
-    """cgo-480: 수노를 부르지 않고 우리 가사만 본다 — 돈이 들지 않는다.
+def lyrics_test(topic: str = '', style: str = '', n: int = 1, seed: int = 0, peek: str = ''):
+    """수노를 부르지 않고 우리 가사만 본다 — 돈이 들지 않는다.
     보기: /lyrics-test?topic=어릴 때 쓰던 연필&n=3"""
     if not _CGO_LOTTO_ON:
         return {"ok": False, "why": "cgo_lyrics.py 를 서버에 올려야 합니다", "err": _CGO_LOTTO_WHY}
     try:
         n = max(1, min(int(n), 10))
         base = int(seed) or int(time.time())
-        songs = [_CGO_LOTTO.detail(topic, style, seed=base + i) for i in range(n)]
-        return {"ok": True, "engine": (songs[0].get('engine') if songs else ''),
-                "topic": topic, "songs": songs}
+        속내 = bool(CGO_PEEK) and peek == CGO_PEEK
+        out = []
+        for i in range(n):
+            d = _CGO_LOTTO.detail(topic, style, seed=base + i)
+            out.append(d if 속내 else {"lyrics": d.get('lyrics', ''),
+                                       "lines": d.get('lines', 0)})
+        return {"ok": True, "topic": topic, "songs": out}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -399,7 +409,7 @@ def version():
     return {"ver": CGO_SRV_VER, "note": CGO_SRV_NOTE,
             "key_src": _cgo_key_src(),
             "lyrics_ai": (" → ".join(CGO_LLM_MODELS) if CGO_LLM_KEY else "꺼짐 — CGO_LLM_KEY 미설정"),
-            "lyrics_own": ("켜짐 — 추첨통 엔진 " + getattr(_CGO_LOTTO, 'ENGINE', '이름 없음') if _CGO_LOTTO_ON
+            "lyrics_own": ("켜짐 — CGO 자체 가사 엔진 v" + getattr(_CGO_LOTTO, 'ENGINE', '?').split('-')[-1] if _CGO_LOTTO_ON
                            else "꺼짐 — cgo_lyrics.py 없음 (" + _CGO_LOTTO_WHY + ")"),
             "started": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(_CGO_BOOT_TS)) + " UTC",
             "uptime_min": round((time.time() - _CGO_BOOT_TS) / 60, 1)}
@@ -3855,11 +3865,11 @@ def _local_lyrics_response(topic, style, api_error='', lang='Korean'):
             seed = int(_lyrics_hash.md5(f"{topic}{style}{time.time():.0f}".encode()).hexdigest()[:8], 16)
             txt, info = _cgo_lotto(topic, style, seed)
             if txt:
+                # cgo-485: 사물·감정·초성 틀은 내보내지 않는다.
+                # 화면에 안 띄워도 응답에 들어 있으면 개발자도구로 그대로 보인다.
+                # 이 세 가지만 모으면 우리가 어떻게 가사를 만드는지 복원할 수 있다.
                 return JSONResponse(content={
                     "ok": True, "lyrics": txt, "source": "cgo",
-                    "engine": info.get('engine', ''), "obj": info.get('obj', ''),
-                    "emotion": info.get('emotion', ''), "hook": info.get('hook', ''),
-                    "chosung": "+".join(info.get('pattern') or []),
                     "api_error": api_error, "lang": lang,
                     "reason": _why(api_error) if api_error else ''})
         return JSONResponse(content={"ok": True,
