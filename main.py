@@ -24,6 +24,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
+_CGO_BOOT_TS = time.time()   # cgo-467: 이 서버가 언제 올라왔는지
+
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 router = app
@@ -337,9 +339,32 @@ def render(req: SimpleReq):
     return render_full(FullReq(bpm=req.bpm, tracks=[Track(instrument=req.instrument, notes=ns)]))
 
 
+# ── cgo-467: 서버가 자기 버전을 말하게 한다 ──────────────────────────
+# 지금까지는 배포가 되었는지 눈으로 알 길이 없었다. 레일웨이 화면의
+# "Deployment successful"은 '무언가'가 올라갔다는 뜻일 뿐, 그게 어느 판인지는
+# 말해주지 않는다. 이제 주소만 열면 버전이 보인다.
+CGO_SRV_VER = "cgo-469"
+CGO_SRV_NOTE = "가사 언어 선택 반영(469) · 여자 보컬+남자 랩 분리(447) · 음색 원문 보존(446)"
+
+
+def _cgo_key_src() -> str:
+    """키를 어디서 가져왔는지만 알린다. 키 자체는 절대 내보내지 않는다."""
+    return "env" if os.environ.get('APIFRAME_KEY') else "builtin"
+
+
 @app.get("/")
 def root():
-    return {"ok": True, "service": "cgo-render", "sf2": _find_sf2(), "vvip": True}
+    return {"ok": True, "service": "cgo-render", "sf2": _find_sf2(), "vvip": True,
+            "ver": CGO_SRV_VER, "key_src": _cgo_key_src()}
+
+
+@app.get("/version")
+def version():
+    """배포 확인 전용. 휴대폰 브라우저에서 열어 'ver'만 보면 된다."""
+    return {"ver": CGO_SRV_VER, "note": CGO_SRV_NOTE,
+            "key_src": _cgo_key_src(),
+            "started": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(_CGO_BOOT_TS)) + " UTC",
+            "uptime_min": round((time.time() - _CGO_BOOT_TS) / 60, 1)}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -348,7 +373,8 @@ def root():
 # 원칙: 최소 2명 이상의 서로 다른 보컬리스트 조합 필수
 # ═══════════════════════════════════════════════════════════════════
 
-APIFRAME_KEY = os.environ.get('APIFRAME_KEY', 'afk_32b0a883e107754089c02eb5977a0945958096b7')
+# cgo-468: 새 키로 교체. 레일웨이 Variables에 APIFRAME_KEY를 넣으면 그쪽이 먼저다.
+APIFRAME_KEY = os.environ.get('APIFRAME_KEY', 'afk_a23fbf3d6ffe106e4a8b23827cff16864457086f')
 
 # ── 인류 역사상 최고의 보컬리스트 100명 (남50 + 여50) ──
 # 한국어(붙여쓰기+띄어쓰기) + 영문 이름 → 영어 보컬 설명
@@ -3017,6 +3043,10 @@ class VvipReq(BaseModel):
     chords: str = ""
     vocal: str = ""  # cgo-382: male/female/duet/bgm/child/choir
     voice_mix_id: str = ""  # cgo-390: VOICE_MIX 프리셋 ID (VM0001~VM1000)
+    timbre: str = ""        # cgo-444: 앱이 보낸 이름 없는 음색 묘사 (있으면 이것을 우선 사용)
+    rap_slot: str = ""      # cgo-445: 랩이 들어갈 자리 none/verse2/bridge/prechorus/intro
+    rap_timbre: str = ""    # cgo-445: 랩 음색 묘사 (이름 없음)
+    rap_gender: str = ""    # cgo-447: 랩 성별 male/female/duet/choir
 
 
 @app.post("/vvip_generate")
@@ -3035,7 +3065,11 @@ def vvip_generate(req: VvipReq):
 
     # ── cgo-394: 보컬 음색 추출 (VOICE_MIX 또는 VOICE_MAP) ──
     vocal_timbre = ""  # 순수 음색 특징만 (장르 키워드 제거됨)
-    if req.voice_mix_id and req.voice_mix_id in VOICE_MIX:
+    # cgo-444: 앱이 보낸 음색 묘사를 그대로 쓴다. 가수 이름이 없으므로 치환도 필요 없고,
+    #          퍼센트는 이미 "순서 + 분량"으로 번역돼 있다.
+    if (req.timbre or '').strip():
+        vocal_timbre = req.timbre.strip()
+    elif req.voice_mix_id and req.voice_mix_id in VOICE_MIX:
         # cgo-390: VOICE_MIX 프리셋 경로
         mix = VOICE_MIX[req.voice_mix_id]
         vocal_timbre = mix["prompt"]
@@ -3074,7 +3108,8 @@ def vvip_generate(req: VvipReq):
     # cgo-395: VOICE_MIX 프리셋에서 이성 음색 설명 제거
     # 예: 남성 선택 시 "sticky deep husky female" 세그먼트 제거
     import re as _re395
-    if req.vocal in ("male", "female") and vocal_timbre:
+    _from_app445 = bool((req.timbre or '').strip())   # cgo-446: 앱이 만든 묘사인가
+    if (not _from_app445) and req.vocal in ("male", "female") and vocal_timbre:
         _opp = "female" if req.vocal == "male" else "male"
         _segs = [s.strip() for s in vocal_timbre.split(',') if s.strip()]
         _filtered = [s for s in _segs if not _re395.search(r'\b' + _opp + r'\b', s, _re395.IGNORECASE)]
@@ -3086,7 +3121,9 @@ def vvip_generate(req: VvipReq):
 
     # style 필드: 보컬 음색 간결화 (120자) + 장르 + BPM + key → 4~7 키워드
     timbre_short = vocal_timbre.strip().strip(',').strip()
-    if len(timbre_short) > 120:
+    # cgo-446: 앱이 보낸 묘사는 순서·분량이 비중을 뜻하므로 자르면 안 된다.
+    #          (예전에는 120자로 잘려 성별 접두사만 남고 묘사가 통째로 버려졌다.)
+    if (not _from_app445) and len(timbre_short) > 120:
         # 쉼표 기준으로 앞쪽 핵심 음색만 유지
         parts = timbre_short.split(',')
         trimmed = []
@@ -3147,10 +3184,75 @@ def vvip_generate(req: VvipReq):
                 _style_for_suno = _pattern.sub(_GENRE_DESCRIPTORS_401[_gk], _style_for_suno, count=1)
                 _genre_replaced = True
                 break
+    # cgo-447: 장르 서술로 바꾸면 "emotional emotional pop ballad"처럼 같은 낱말이
+    #          연달아 겹칠 수 있다. 붙어 있는 중복 낱말만 하나로 줄인다.
+    _style_for_suno = _re401.sub(r'\b(\w+)(\s+\1\b)+', r'\1', _style_for_suno, flags=_re401.IGNORECASE)
+    # cgo-446: 앱 묘사에는 이미 성별 문구가 들어 있다. 서버가 또 붙이면
+    #          "male vocals only … female vocals only" 처럼 모순된 지시가 되어
+    #          여성을 골라도 남성 목소리가 나왔다. 앱 묘사가 있으면 그것만 쓴다.
+    if _from_app445:
+        vocal_tag = ""
     if timbre_short:
         suno_style = f"{vocal_tag}{timbre_short}, {_style_for_suno}, {req.bpm} BPM, key of {req.key}"
     else:
         suno_style = f"{vocal_tag}{req.style}, {req.bpm} BPM, key of {req.key}"
+
+    # ═══ cgo-445: 랩 구간 삽입 ═══
+    # 래퍼 음색만 지정해서는 Suno가 랩을 넣지 않는다. 가사에 [Rap] 구조 태그가 있어야 한다.
+    _RAP_TAG = {
+        'verse2':    ('[Verse 2]', '[Rap Verse]'),          # 2절을 통째로 랩으로
+        'bridge':    ('[Bridge]', '[Rap Break]'),           # 브릿지를 랩으로 — 발라드에 가장 잘 맞는다
+        'prechorus': ('[Pre-Chorus]', '[Rap]'),             # 후렴 직전 짧게
+        'intro':     ('[Intro]', '[Rap Intro]'),            # 곡 머리에서 치고 들어옴
+    }
+
+    def _apply_rap(lyr: str, slot: str) -> str:
+        """가사에 랩 구조 태그를 심는다. 자리가 없으면 적절한 위치에 새로 만든다."""
+        if not slot or slot == 'none' or not lyr:
+            return lyr
+        pair = _RAP_TAG.get(slot)
+        if not pair:
+            return lyr
+        want, tag = pair
+        if tag in lyr:                      # 이미 있음
+            return lyr
+        if want in lyr:                     # 기존 구간을 랩으로 바꾼다
+            return lyr.replace(want, tag, 1)
+        lines = lyr.split('\n')
+        if slot == 'intro':
+            return tag + '\n' + lyr
+        # 마지막 [Chorus] 앞에 끼워 넣는다 (브릿지·프리코러스·2절 대체 모두 여기로)
+        idx = [i for i, l in enumerate(lines) if l.strip().startswith('[Chorus')]
+        at = idx[-1] if idx else len(lines)
+        return '\n'.join(lines[:at] + [tag, ''] + lines[at:])
+
+    _rap_on = bool((req.rap_slot or '').strip()) and req.rap_slot != 'none'
+    if _rap_on:
+        _rt = (req.rap_timbre or '').strip()
+        _rg = (req.rap_gender or '').strip().lower()
+
+        # cgo-447: 메인 보컬이 여성인데 랩이 남성이면(또는 그 반대),
+        # 앞쪽 "no male vocals / no female vocals"가 래퍼를 원천 금지해 버린다.
+        # 그래서 배제 문구를 '노래하는 부분에 한해서'로 범위를 좁힌다.
+        _lead = ('f' if suno_style.startswith('female vocals only')
+                 else 'm' if suno_style.startswith('male vocals only') else '')
+        _rapg = 'f' if _rg == 'female' else 'm' if _rg == 'male' else ''
+        if _lead and _rapg and _lead != _rapg:
+            suno_style = suno_style.replace(
+                'female vocals only, all female singers, no male vocals, ',
+                'female lead vocals on every sung line, all sung parts by a female singer, ', 1)
+            suno_style = suno_style.replace(
+                'male vocals only, all male singers, no female vocals, ',
+                'male lead vocals on every sung line, all sung parts by a male singer, ', 1)
+
+        suno_style = suno_style.rstrip().rstrip(',') + ', with a featured rap section'
+        if _rt:
+            suno_style += ' performed by ' + _rt
+        if _lead and _rapg and _lead != _rapg:
+            _lw = 'female' if _lead == 'f' else 'male'
+            _rw = 'female' if _rapg == 'f' else 'male'
+            suno_style += (f'; the rap section only is rapped by a {_rw} voice'
+                           f', every other section is sung by the {_lw} lead')
 
     # lyrics 필드: 가사 + [Verse]/[Chorus] 메타태그 삽입
     has_lyrics = bool(req.lyrics and req.lyrics.strip())
@@ -3183,6 +3285,8 @@ def vvip_generate(req: VvipReq):
                 suno_lyrics = "[Verse 1]\n" + '\n'.join(lyric_lines[:third])
                 suno_lyrics += "\n\n[Chorus]\n" + '\n'.join(lyric_lines[third:third*2])
                 suno_lyrics += "\n\n[Verse 2]\n" + '\n'.join(lyric_lines[third*2:])
+        if _rap_on:
+            suno_lyrics = _apply_rap(suno_lyrics, req.rap_slot)
 
     # ── apiframe.ai v2 API 호출 (비동기: job_id만 즉시 반환) ──
     # cgo-394: 코드진행은 Suno가 파싱 불가 → 프롬프트에서 제외
@@ -3472,131 +3576,82 @@ import random as _lyrics_random
 import hashlib as _lyrics_hash
 
 def _generate_korean_lyrics(topic: str, style: str) -> str:
-    """서버 로컬 한국어 가사 생성기 — Udio API 실패 시 폴백"""
+    """서버 로컬 한국어 가사 생성기 — Udio 실패 시 폴백.
+    cgo-443: 주제 글(topic)은 '분위기 판별'에만 쓰고 가사 줄에는 절대 넣지 않는다.
+    (이전에는 f'{topic}... 안녕' 처럼 사용자가 쓴 문장이 그대로 가사에 박혔다.)
+    어미를 무작위로 이어 붙이던 방식도 폐기 — 완성된 문장만 쓴다."""
     seed = int(_lyrics_hash.md5(f"{topic}{style}{time.time():.0f}".encode()).hexdigest()[:8], 16)
     rng = _lyrics_random.Random(seed)
-    kw = topic.lower()
-    # 감정 분류
-    sad_kw = ['이별','슬픈','눈물','그리움','아픔','외로','헤어','비','울','잊','떠나','보내']
-    love_kw = ['사랑','설렘','첫사랑','두근','키스','고백','달콤','행복','너','그대','함께']
+    kw = (topic or '').lower()
+    sad_kw = ['이별','슬픈','눈물','그리움','아픔','외로','헤어','비','울','잊','떠나','보내','미련','상처']
+    love_kw = ['사랑','설렘','첫사랑','두근','키스','고백','달콤','행복','그대','함께','연인','곁']
     night_kw = ['밤','별','달','새벽','어둠','불빛','노을','하늘']
-    hope_kw = ['희망','꿈','미래','빛','시작','용기','날개','비상']
+    hope_kw = ['희망','꿈','미래','빛','시작','용기','날개','비상','내일']
     is_sad = any(w in kw for w in sad_kw)
     is_love = any(w in kw for w in love_kw)
     is_night = any(w in kw for w in night_kw)
     is_hope = any(w in kw for w in hope_kw)
-    if not (is_sad or is_love or is_night or is_hope):
-        is_love = True
-    # 운율 어미 풀
-    endings_sad = ['잖아','니까','는데','었어','텐데','겠지','을까','잖아요','나 봐','다고','래도','인걸']
-    endings_love = ['잖아','고 싶어','할래','일까','처럼','니까','거든','보다','같아','하나','어도']
-    endings_hope = ['거야','할 거야','테니까','잖아','일 테니','될 거야','가자','고 싶어','이니까','인걸']
-    # 주제별 가사 소재
-    sad_lines_v = [
-        f'텅 빈 거리에 {topic}의 흔적만 남아',f'지워지지 않는 기억 속에서 헤매여',f'너의 빈자리가 이렇게 큰 줄 몰랐어',
-        f'흐린 창밖으로 흘러내리는 빗물처럼',f'돌아올 수 없는 그 시간이 아프{rng.choice(endings_sad)}',
-        f'입술 끝에 맴도는 이름 하나',f'아직도 네가 있는 것 같{rng.choice(endings_sad)}',
-        f'바람이 불면 너의 향기가 스쳐가',f'매일 밤 나를 찾아오는 그리움이',f'사랑이 이별이 되는 순간을 난',
-        f'우리가 걸었던 그 길이 흐릿해져',f'시간이 흘러도 이 아픔은 그대로{rng.choice(["인데","잖아","인걸"])}',
-    ]
-    sad_lines_c = [
-        f'보고 싶어 보고 싶어 또 보고 싶어',f'잊으려 해도 자꾸만 떠올라',f'이 밤이 지나면 괜찮아질까',
-        f'눈물이 마를 때까지 기다릴게',f'너 없는 세상은 너무 {rng.choice(["차가워","외로워","텅 비어"])}',
-        f'다시 한번만 네 곁에 있고 싶어',f'사랑했{rng.choice(["잖아","었는데","다고"])} 정말 사랑했{rng.choice(["잖아","었는데","다고"])}',
-    ]
-    love_lines_v = [
-        f'네가 웃을 때 세상이 환해지는 것 같아',f'{topic}처럼 달콤한 이 순간이',f'심장이 두근두근 멈추질 않아',
-        f'너의 눈빛 속에 내가 담겨 있{rng.choice(endings_love)}',f'매일이 특별해지는 건 네 덕분{rng.choice(["이야","인걸","이라서"])}',
-        f'손끝이 닿는 순간 전부 다 멈춰',f'이런 감정은 처음이라 어쩔 줄 몰라',
-        f'네 목소리만 들어도 하루가 완성돼',f'꿈인지 현실인지 모를 만큼 행복해',f'세상 누구보다 빛나는 사람',
-    ]
-    love_lines_c = [
-        f'너를 사랑해 오늘도 내일도 영원히',f'이 세상 끝까지 함께 걸어갈래',f'너라는 기적이 내게 찾아온 거야',
-        f'매 순간 네가 있어 난 완벽해',f'사랑한다 말할게 수백 번이라도',
-        f'네 곁이 나의 전부{rng.choice(["야","인 걸","라서"])}',
-    ]
-    night_lines_v = [
-        f'별빛이 쏟아지는 이 밤에',f'어둠 속에서 빛나는 너의 {rng.choice(["미소","눈빛","모습"])}',
-        f'달이 우리를 비추는 이 순간',f'새벽 공기 속에 {topic}이 스며들어',f'창밖으로 내리는 {rng.choice(["달빛","별빛","불빛"])}이',
-        f'고요한 밤하늘에 소원을 빌어',f'도시의 불빛 아래 우리 둘만의 시간',
-    ]
-    hope_lines_v = [
-        f'어둠이 지나면 반드시 빛이 와',f'{topic}을 향해 두 팔을 펼쳐',f'넘어져도 다시 일어나는 거야',
-        f'내 안의 날개를 활짝 펴는 순간',f'두려움 너머에 기다리는 내일이',f'포기하지 않을 거야 끝까지',
-    ]
-    hope_lines_c = [
-        f'날아올라 더 높이 더 멀리',f'우리의 꿈은 멈추지 않아',f'빛나는 내일을 향해 달려가자',
-        f'할 수 있어 난 할 수 있어 믿어봐',
-    ]
-    lines = []
-    lines.append('[Verse 1]')
     if is_sad:
-        v1 = rng.sample(sad_lines_v, min(4, len(sad_lines_v)))
-    elif is_love:
-        v1 = rng.sample(love_lines_v, min(4, len(love_lines_v)))
-    elif is_night:
-        v1 = rng.sample(night_lines_v, min(4, len(night_lines_v)))
+        mood = 'sad'
+    elif is_hope and not is_love:
+        mood = 'hope'
+    elif is_night and not is_love:
+        mood = 'night'
     else:
-        v1 = rng.sample(hope_lines_v, min(4, len(hope_lines_v)))
-    lines.extend(v1)
-    lines.append('')
-    lines.append('[Chorus]')
-    if is_sad:
-        ch = rng.sample(sad_lines_c, min(4, len(sad_lines_c)))
-    elif is_love:
-        ch = rng.sample(love_lines_c, min(4, len(love_lines_c)))
-    elif is_hope:
-        ch = rng.sample(hope_lines_c, min(3, len(hope_lines_c)))
-    else:
-        ch = rng.sample(love_lines_c, min(3, len(love_lines_c)))
-    lines.extend(ch)
-    lines.append('')
-    lines.append('[Verse 2]')
-    if is_sad:
-        pool2 = [l for l in sad_lines_v if l not in v1]
-        if len(pool2) < 3:
-            pool2 = sad_lines_v
-        v2 = rng.sample(pool2, min(4, len(pool2)))
-    elif is_love:
-        pool2 = [l for l in love_lines_v if l not in v1]
-        if len(pool2) < 3:
-            pool2 = love_lines_v
-        v2 = rng.sample(pool2, min(4, len(pool2)))
-    elif is_night:
-        pool2 = [l for l in night_lines_v if l not in v1]
-        if len(pool2) < 3:
-            pool2 = night_lines_v
-        v2 = rng.sample(pool2, min(4, len(pool2)))
-    else:
-        pool2 = [l for l in hope_lines_v if l not in v1]
-        if len(pool2) < 3:
-            pool2 = hope_lines_v
-        v2 = rng.sample(pool2, min(4, len(pool2)))
-    lines.extend(v2)
-    lines.append('')
-    lines.append('[Chorus]')
-    lines.extend(ch)
-    lines.append('')
-    lines.append('[Bridge]')
-    bridges_sad = [f'시간아 제발 멈춰줘',f'한 번만 더 안아줄 수 있다면',f'이게 마지막이라 해도',f'우리의 계절은 끝나지 않아']
-    bridges_love = [f'매일 밤 꿈속에서도 너를 만나',f'세상이 뭐라 해도 난 너야',f'이 노래가 끝나도 우린 영원해',f'약속할게 영원히 네 곁에']
-    bridges_hope = [f'지금 이 순간이 시작이야',f'함께라면 못할 게 없어',f'내일은 오늘보다 더 빛날 거야',f'눈을 감고 느껴봐 우리의 미래를']
-    if is_sad:
-        br = rng.sample(bridges_sad, min(2, len(bridges_sad)))
-    elif is_love or is_night:
-        br = rng.sample(bridges_love, min(2, len(bridges_love)))
-    else:
-        br = rng.sample(bridges_hope, min(2, len(bridges_hope)))
-    lines.extend(br)
-    lines.append('')
-    lines.append('[Outro]')
-    if is_sad:
-        lines.append(rng.choice([f'{topic}... 안녕',f'그래도 사랑했었다',f'이 노래가 끝나면 놓아줄게']))
-    elif is_love:
-        lines.append(rng.choice([f'사랑해 영원히',f'너와 함께라면 어디든',f'우리의 이야기는 계속돼']))
-    else:
-        lines.append(rng.choice([f'우리는 할 수 있어',f'빛나는 내일을 향해',f'이건 끝이 아닌 시작이야']))
-    return '\n'.join(lines)
+        mood = 'love'
+
+    V = {
+    'sad': ['텅 빈 거리에 네 흔적만 남아 있어','지워지지 않는 기억 속을 헤매고 있어',
+        '너의 빈자리가 이렇게 큰 줄 몰랐어','흐린 창밖으로 빗물이 흘러내려',
+        '돌아올 수 없는 그 시간이 아프잖아','입술 끝에 네 이름이 맴돌아',
+        '아직도 네가 곁에 있는 것만 같아','바람이 불면 너의 향기가 스쳐가',
+        '매일 밤 그리움이 나를 찾아와','사랑이 이별이 되던 그 순간에',
+        '우리가 걸었던 그 길이 흐릿해져','시간이 흘러도 이 아픔은 그대로야',
+        '네가 남긴 말들이 아직 귓가에 맴돌아','혼자 남은 방 안에 적막만 가득해'],
+    'love': ['네가 웃을 때 세상이 환해지는 것 같아','달콤한 이 순간이 꿈처럼 흘러가',
+        '심장이 두근두근 멈추질 않아','너의 눈빛 속에 내가 담겨 있잖아',
+        '매일이 특별해지는 건 네 덕분이야','손끝이 닿는 순간 전부 다 멈춰',
+        '이런 감정은 처음이라 어쩔 줄 몰라','네 목소리만 들어도 하루가 완성돼',
+        '꿈인지 현실인지 모를 만큼 행복해','세상 누구보다 네가 빛나 보여',
+        '너와 걷는 이 길이 더없이 따뜻해','아무 말 없이 곁에 있어도 좋아'],
+    'night': ['별빛이 쏟아지는 이 밤에','어둠 속에서 너의 미소가 빛나',
+        '달이 우리를 비추는 이 순간','새벽 공기가 조용히 스며들어',
+        '창밖으로 달빛이 내려앉아','고요한 밤하늘에 소원을 빌어',
+        '도시의 불빛 아래 우리 둘만의 시간','노을이 지는 하늘을 함께 바라봐'],
+    'hope': ['어둠이 지나면 반드시 빛이 와','내일을 향해 두 팔을 펼쳐',
+        '넘어져도 다시 일어나는 거야','내 안의 날개를 활짝 펴는 순간',
+        '두려움 너머에 기다리는 내일이 있어','포기하지 않을 거야 끝까지',
+        '한 걸음씩 천천히 나아가고 있어','멈추지 않으면 언젠가 닿을 거야']}
+    C = {
+    'sad': ['보고 싶어 보고 싶어 또 보고 싶어','잊으려 해도 자꾸만 떠올라',
+            '이 밤이 지나면 괜찮아질까','눈물이 마를 때까지 기다릴게',
+            '너 없는 세상은 너무 차가워','다시 한번만 네 곁에 있고 싶어',
+            '사랑했잖아 우린 정말 사랑했잖아'],
+    'love': ['너를 사랑해 오늘도 내일도 영원히','이 세상 끝까지 함께 걸어갈래',
+             '너라는 기적이 내게 찾아온 거야','매 순간 네가 있어 난 완벽해',
+             '사랑한다 말할게 수백 번이라도','네 곁이 나의 전부야'],
+    'night': ['이 밤이 우리를 감싸 안아줘','별빛 아래 너와 나 단둘이',
+              '깊어가는 밤에 너를 생각해','달빛이 우리 둘을 비춰줘'],
+    'hope': ['날아올라 더 높이 더 멀리','우리의 꿈은 멈추지 않아',
+             '빛나는 내일을 향해 달려가자','할 수 있어 난 할 수 있어 믿어봐']}
+    B = {
+    'sad': ['시간아 제발 멈춰줘','한 번만 더 안아줄 수 있다면','이게 마지막이라 해도','우리의 계절은 끝나지 않아'],
+    'love': ['매일 밤 꿈속에서도 너를 만나','세상이 뭐라 해도 난 너야','이 노래가 끝나도 우린 영원해','약속할게 영원히 네 곁에'],
+    'night': ['이 밤이 끝나지 않았으면 해','새벽이 와도 여기 있어줘','별이 지기 전에 네게 닿고 싶어'],
+    'hope': ['지금 이 순간이 시작이야','함께라면 못할 게 없어','내일은 오늘보다 더 빛날 거야','눈을 감고 느껴봐 우리의 미래를']}
+    O = {
+    'sad': ['그래도 사랑했었다','이 노래가 끝나면 놓아줄게','안녕 나의 계절아'],
+    'love': ['사랑해 영원히','너와 함께라면 어디든','우리의 이야기는 계속돼'],
+    'night': ['이 밤을 기억할게','별빛처럼 오래 남아줘','조용히 눈을 감아'],
+    'hope': ['우리는 할 수 있어','빛나는 내일을 향해','이건 끝이 아닌 시작이야']}
+
+    pool = list(V[mood]); rng.shuffle(pool)
+    v1, v2 = pool[:4], pool[4:8]
+    ch = rng.sample(C[mood], min(4, len(C[mood])))
+    br = rng.sample(B[mood], min(2, len(B[mood])))
+    out = ['[Verse 1]'] + v1 + ['', '[Chorus]'] + ch + ['', '[Verse 2]'] + v2
+    out += ['', '[Chorus]'] + ch + ['', '[Bridge]'] + br + ['', '[Outro]', rng.choice(O[mood])]
+    return '\n'.join(out)
 
 # ═══ cgo-439: AI 가사 생성 안정화 ═══
 # 기존 문제: Udio 가사 API는 비동기 job → job_id만 클라이언트로 넘기고 클라이언트가 폴링.
@@ -3678,55 +3733,149 @@ def _poll_apiframe_job(job_id: str, max_wait: float = 40.0, interval: float = 2.
         time.sleep(interval)
     return '', f"시간 초과 ({last})"
 
-def _local_lyrics_response(topic, style, api_error=''):
+# cgo-469: 앱의 '노래 언어' 15가지 — 그 나라 글자 이름을 함께 줘야 AI가 덜 헷갈린다.
+_LANG_NATIVE = {
+    'Korean': '한국어', 'English': 'English', 'Japanese': '日本語', 'Chinese': '中文',
+    'Spanish': 'Español', 'French': 'Français', 'German': 'Deutsch', 'Italian': 'Italiano',
+    'Portuguese': 'Português', 'Russian': 'Русский', 'Arabic': 'العربية', 'Hindi': 'हिन्दी',
+    'Indonesian': 'Bahasa Indonesia', 'Thai': 'ภาษาไทย', 'Vietnamese': 'Tiếng Việt',
+}
+
+
+def _is_korean_lang(lang) -> bool:
+    return (lang or 'Korean').strip().lower().startswith('korea')
+
+
+def _generate_fallback_lyrics(topic: str, style: str, lang: str) -> str:
+    """AI 가사가 실패했을 때 쓰는 비상 가사.
+    cgo-469: 예전에는 어떤 언어를 골랐든 한국어 가사가 나왔다. 영어 노래를 주문했는데
+    한국어 가사가 오는 것은 안 쓰느니만 못하다. 한국어가 아니면 영어로 돌려준다.
+    주제 글은 분위기 판별에만 쓰고 가사 줄에는 넣지 않는다(cgo-443과 같은 원칙)."""
+    if _is_korean_lang(lang):
+        return _generate_korean_lyrics(topic, style)
+    kw = (topic or '').lower()
+    sad = any(w in kw for w in ('sad', 'tear', 'lonely', 'rain', 'goodbye', 'miss', 'break',
+                                '이별', '슬픈', '눈물', '그리움', '외로'))
+    hope = any(w in kw for w in ('hope', 'dream', 'light', 'tomorrow', 'rise', 'begin',
+                                 '희망', '꿈', '빛', '시작'))
+    if sad:
+        v1 = ["The room still keeps the shape of you", "and every quiet hour knows your name.",
+              "I learned the weight of empty chairs,", "I learned that nothing stays the same."]
+        ch = ["So let the evening take me slow,", "let the streetlights blur the rest.",
+              "If I can't hold you anymore,", "I'll hold the way you left."]
+        br = ["And maybe time is not a wound,", "maybe time is only wide."]
+    elif hope:
+        v1 = ["Morning breaks against the window,", "and the dark gives up its hold.",
+              "Everything I thought was ending", "turns out to be the road."]
+        ch = ["So I'm walking into daylight,", "with my whole heart open wide.",
+              "Every step I thought would break me", "built the ground beneath my stride."]
+        br = ["I was never really falling,", "I was learning how to fly."]
+    else:
+        v1 = ["There's a song inside the quiet,", "something only we can hear.",
+              "In the space between the heartbeats,", "that's the place I find you near."]
+        ch = ["And we'll carry it together,", "through the noise and through the night.",
+              "Every ordinary moment", "turning gold against the light."]
+        br = ["Nothing lasts, and that's the beauty,", "that's the reason we hold tight."]
+    return ("[Verse]\n" + "\n".join(v1)
+            + "\n\n[Chorus]\n" + "\n".join(ch)
+            + "\n\n[Verse]\n" + "\n".join(reversed(v1))
+            + "\n\n[Bridge]\n" + "\n".join(br)
+            + "\n\n[Chorus]\n" + "\n".join(ch))
+
+
+def _local_lyrics_response(topic, style, api_error='', lang='Korean'):
     try:
-        return JSONResponse(content={"ok": True, "lyrics": _generate_korean_lyrics(topic, style),
-                                     "source": "local", "api_error": api_error})
+        return JSONResponse(content={"ok": True,
+                                     "lyrics": _generate_fallback_lyrics(topic, style, lang),
+                                     "source": "local", "api_error": api_error, "lang": lang,
+                                     "reason": _why(api_error) if api_error else ''})
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": f"가사 생성 실패: {str(e)}", "api_error": api_error})
 
-@app.post("/generate_lyrics")
-def generate_lyrics(body: dict):
-    """AI 가사 생성 — Udio 가사 API(서버에서 완료까지 대기) → 실패 시 로컬 생성기 폴백. 항상 가사를 돌려줌"""
-    topic = (body.get('topic') or '').strip()
-    style = (body.get('style') or 'pop ballad').strip()
-    if not topic:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "주제/분위기를 입력해 주세요."})
-    if body.get('local_only') or not APIFRAME_KEY:
-        return _local_lyrics_response(topic, style, '' if APIFRAME_KEY else 'API 키 미설정')
-    api_error = ''
-    lyrics_prompt = (f"Korean song lyrics about: {topic}. Style: {style}. "
-                     f"Write in Korean (한국어). Include [Verse], [Chorus], [Bridge] structure tags.")[:2000]
+# cgo-443: 혼잡("No available capacity") 같은 일시적 실패는 재시도한다.
+_RETRYABLE = ('no available capacity','please retry','rate limit','too many','temporarily',
+              'overload','timeout','timed out','503','502','504','429','시간 초과')
+
+def _is_retryable(msg: str) -> bool:
+    m = (msg or '').lower()
+    return any(k in m for k in _RETRYABLE)
+
+def _why(api_error: str) -> str:
+    """사용자에게 보여줄 한 줄 사유"""
+    m = (api_error or '').lower()
+    if 'no available capacity' in m or 'please retry' in m:
+        return 'AI 가사 서버가 혼잡합니다 — 잠시 후 다시 눌러 주세요'
+    if '401' in m or 'unauthorized' in m:
+        return 'AI 가사 서버 인증 오류 — API 키를 확인해 주세요'
+    if '402' in m or 'credit' in m or 'insufficient' in m:
+        return 'AI 가사 크레딧이 부족합니다'
+    if 'rate limit' in m or '429' in m:
+        return '요청이 많아 잠시 제한되었습니다 — 잠시 후 다시 시도해 주세요'
+    if '시간 초과' in (api_error or '') or 'timeout' in m:
+        return 'AI 가사 생성이 오래 걸려 기본 가사로 만들었습니다'
+    return 'AI 가사 서버에 연결하지 못했습니다'
+
+def _udio_once(prompt_text: str):
+    """Udio 가사 API 1회 시도 → (가사, 오류설명)"""
     try:
         resp = http_requests.post(
             'https://api.apiframe.ai/v2/music/udio/lyrics',
             headers={'X-API-Key': APIFRAME_KEY, 'Content-Type': 'application/json'},
-            json={"prompt": lyrics_prompt, "duration": 97},
+            json={"prompt": prompt_text, "duration": 97},
             timeout=30
         )
-        if resp.ok:
-            result = resp.json()
-            lyr = _extract_lyrics(result)
-            if not lyr:
-                job_id = _job_id_of(result)
-                if job_id:
-                    lyr, api_error = _poll_apiframe_job(job_id)
-                else:
-                    api_error = f"job ID 없음: {str(result)[:200]}"
-            if lyr:
-                return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio"})
-        else:
-            api_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        if not resp.ok:
+            return '', f"HTTP {resp.status_code}: {resp.text[:200]}"
+        result = resp.json()
+        lyr = _extract_lyrics(result)
+        if lyr:
+            return lyr, ''
+        job_id = _job_id_of(result)
+        if not job_id:
+            return '', f"job ID 없음: {str(result)[:200]}"
+        return _poll_apiframe_job(job_id, max_wait=22.0)
     except Exception as e:
-        api_error = f"API 연결 예외: {e}"
-    print(f"[generate_lyrics] Udio 실패 → 로컬 폴백: {api_error}", flush=True)
-    return _local_lyrics_response(topic, style, api_error)
+        return '', f"API 연결 예외: {e}"
+
+@app.post("/generate_lyrics")
+def generate_lyrics(body: dict):
+    """AI 가사 생성 — Udio(최대 3회 재시도) → 실패 시 로컬 생성기. 항상 가사를 돌려준다."""
+    topic = (body.get('topic') or '').strip()
+    style = (body.get('style') or 'pop ballad').strip()
+    if not topic:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "주제/분위기를 입력해 주세요."})
+    _lang0 = (body.get('lang') or '').strip() or 'Korean'      # cgo-469
+    if body.get('local_only') or not APIFRAME_KEY:
+        return _local_lyrics_response(topic, style, '' if APIFRAME_KEY else 'API 키 미설정', _lang0)
+
+    # cgo-469: 노래 언어를 앱에서 받아 그 언어로 쓰게 한다.
+    # 지금까지는 "Korean ... Write in Korean"이 못 박혀 있어서, 앱에서 영어를 골라도
+    # 서버가 한국어 가사만 주문했다. 앱은 lang을 보내고 있었는데 서버가 안 읽었다.
+    lang = (body.get('lang') or '').strip() or 'Korean'
+    _nat = _LANG_NATIVE.get(lang, lang)
+    prompt_text = (f"Song lyrics in {lang} about: {topic}. Musical style: {style}. "
+                   f"Write every single line in {lang} ({_nat}) — do not use any other language. "
+                   f"Include [Verse], [Chorus], [Bridge] structure tags. "
+                   f"Output the lyrics only.")[:2000]
+    api_error = ''
+    WAITS = [0, 4, 9]          # 1회차 즉시, 2회차 4초 뒤, 3회차 9초 뒤
+    for attempt, wait in enumerate(WAITS, start=1):
+        if wait:
+            time.sleep(wait)
+        lyr, api_error = _udio_once(prompt_text)
+        if lyr:
+            return JSONResponse(content={"ok": True, "lyrics": lyr, "source": "udio", "attempt": attempt})
+        print(f"[generate_lyrics] Udio {attempt}/{len(WAITS)}회차 실패: {api_error}", flush=True)
+        if not _is_retryable(api_error):
+            break              # 인증·크레딧 오류는 재시도해도 소용없다
+    print(f"[generate_lyrics] Udio 최종 실패 → 로컬 폴백: {api_error}", flush=True)
+    return _local_lyrics_response(topic, style, api_error, lang)   # cgo-469
 
 @app.get("/lyrics_status/{job_id}")
-def lyrics_status(job_id: str, topic: str = '', style: str = 'pop ballad'):
+def lyrics_status(job_id: str, topic: str = '', style: str = 'pop ballad', lang: str = 'Korean'):
     """(구버전 클라이언트 호환) 가사 job 상태 조회 — 실패 시 topic이 있으면 로컬 가사로 폴백"""
     if not APIFRAME_KEY:
-        return _local_lyrics_response(topic, style, 'API 키 미설정') if topic else \
+        return _local_lyrics_response(topic, style, 'API 키 미설정', lang) if topic else \
             JSONResponse(content={"ok": False, "status": "FAILED", "error": "API 키 미설정"})
     lyr, err = _poll_apiframe_job(job_id, max_wait=8.0, interval=2.0)
     if lyr:
